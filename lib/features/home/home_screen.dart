@@ -18,13 +18,19 @@ class HomeScreen extends ConsumerWidget {
       body: alarmsAsync.when(
         data: (alarms) => AlarmListView(
           alarms: alarms,
-          onToggle: (alarm, enabled) => ref
-              .read(alarmListControllerProvider.notifier)
-              .toggleEnabled(alarm.id, enabled),
+          onToggle: (alarm, enabled) => _guard(
+            context,
+            () => ref
+                .read(alarmListControllerProvider.notifier)
+                .toggleEnabled(alarm.id, enabled),
+          ),
           onTap: (alarm) => _openEditScreen(context, alarm),
-          onDelete: (alarm) => ref
-              .read(alarmListControllerProvider.notifier)
-              .deleteAlarm(alarm.id),
+          onDelete: (alarm) => _guard(
+            context,
+            () => ref
+                .read(alarmListControllerProvider.notifier)
+                .deleteAlarm(alarm.id),
+          ),
         ),
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stackTrace) =>
@@ -49,5 +55,18 @@ class HomeScreen extends ConsumerWidget {
         builder: (_) => CreateEditAlarmScreen(existingAlarm: alarm),
       ),
     );
+  }
+
+  Future<void> _guard(BuildContext context, Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (error) {
+      debugPrint('[HomeScreen] action FAILED: $error');
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('İşlem başarısız: $error')));
+      }
+    }
   }
 }

@@ -140,30 +140,50 @@ class _CreateEditAlarmScreenState
   Future<void> _save() async {
     final controller = ref.read(alarmListControllerProvider.notifier);
     final existing = widget.existingAlarm;
-    if (existing == null) {
-      await controller.addAlarm(
-        hour: _time.hour,
-        minute: _time.minute,
-        repeatDays: _repeatDays,
-        difficulty: _difficulty,
-      );
-    } else {
-      await controller.updateAlarm(
-        existing.copyWith(
+    try {
+      if (existing == null) {
+        await controller.addAlarm(
           hour: _time.hour,
           minute: _time.minute,
           repeatDays: _repeatDays,
           difficulty: _difficulty,
-        ),
-      );
+        );
+      } else {
+        await controller.updateAlarm(
+          existing.copyWith(
+            hour: _time.hour,
+            minute: _time.minute,
+            repeatDays: _repeatDays,
+            difficulty: _difficulty,
+          ),
+        );
+      }
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      debugPrint('[CreateEditAlarmScreen] save FAILED: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Alarm kaydedilemedi: $error')),
+        );
+      }
     }
-    if (mounted) Navigator.of(context).pop();
   }
 
   Future<void> _delete() async {
     final existing = widget.existingAlarm;
     if (existing == null) return;
-    await ref.read(alarmListControllerProvider.notifier).deleteAlarm(existing.id);
-    if (mounted) Navigator.of(context).pop();
+    try {
+      await ref
+          .read(alarmListControllerProvider.notifier)
+          .deleteAlarm(existing.id);
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      debugPrint('[CreateEditAlarmScreen] delete FAILED: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Alarm silinemedi: $error')),
+        );
+      }
+    }
   }
 }

@@ -7,6 +7,8 @@ import 'features/alarm/alarm_list_controller.dart';
 import 'features/alarm/alarm_ring_screen.dart';
 import 'features/alarm/alarm_service.dart';
 
+const _tag = '[main]';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -17,6 +19,7 @@ Future<void> main() async {
     // alarm notification or its full-screen intent triggers; cold starts
     // are instead handled below via getNotificationAppLaunchDetails.
     onDidReceiveNotificationResponse: (details) {
+      debugPrint('$_tag onDidReceiveNotificationResponse: payload=${details.payload}');
       rootNavigatorKey.currentState?.push(
         MaterialPageRoute(
           builder: (_) => AlarmRingScreen(alarmId: details.payload),
@@ -30,6 +33,10 @@ Future<void> main() async {
   final launchedFromAlarmId = (launchDetails?.didNotificationLaunchApp ?? false)
       ? launchDetails?.notificationResponse?.payload
       : null;
+  debugPrint(
+    '$_tag didNotificationLaunchApp=${launchDetails?.didNotificationLaunchApp ?? false} '
+    'launchedFromAlarmId=$launchedFromAlarmId',
+  );
 
   runApp(
     ProviderScope(
