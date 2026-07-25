@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -14,7 +15,22 @@ class HomeScreen extends ConsumerWidget {
     final alarmsAsync = ref.watch(alarmListControllerProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Motion Alarm')),
+      appBar: AppBar(
+        title: const Text('Motion Alarm'),
+        actions: [
+          // Debug-only: reproduces the firing/delivery path in 10s instead
+          // of waiting on the clock, for diagnosing scheduling issues.
+          if (kDebugMode)
+            IconButton(
+              icon: const Icon(Icons.bug_report_outlined),
+              tooltip: 'TEST: 10 saniye sonra alarmı çal',
+              onPressed: () => _guard(
+                context,
+                () => ref.read(alarmSchedulingServiceProvider).scheduleTestAlarm(),
+              ),
+            ),
+        ],
+      ),
       body: alarmsAsync.when(
         data: (alarms) => AlarmListView(
           alarms: alarms,

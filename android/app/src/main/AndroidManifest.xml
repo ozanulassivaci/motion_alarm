@@ -13,6 +13,9 @@
     <!-- Keeps the CPU awake long enough for the exact alarm to actually fire
          and the full-screen intent to launch. -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Lets flutter_local_notifications reschedule alarms after a reboot,
+         since AlarmManager entries are otherwise cleared. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <application
         android:label="motion_alarm"
         android:name="${applicationName}"
@@ -46,6 +49,26 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Required by flutter_local_notifications to actually deliver a
+             scheduled alarm: without this, AlarmManager fires but Android has
+             nowhere to broadcast to, and silently drops it (this was the bug
+             that made every alarm schedule successfully but never fire). -->
+        <receiver
+            android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+        <!-- Reschedules alarms after a reboot (AlarmManager entries don't
+             survive one otherwise). -->
+        <receiver
+            android:exported="false"
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

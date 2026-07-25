@@ -146,6 +146,30 @@ class AlarmSchedulingService {
     }
   }
 
+  /// Debug-only: schedules straight through the same permission/channel/
+  /// zonedSchedule path as a real alarm, but at a fixed short delay instead
+  /// of an hour:minute — for quickly reproducing the firing/delivery path
+  /// without waiting on the clock or the time picker. Uses a reserved id
+  /// outside the range `_idFor` can ever produce, so it can never collide
+  /// with a real alarm's scheduled occurrences.
+  static const testAlarmId = 999999999;
+  static const testAlarmPayload = '__test_alarm__';
+
+  Future<void> scheduleTestAlarm({
+    Duration delay = const Duration(seconds: 10),
+  }) async {
+    debugPrint('$_tag scheduleTestAlarm: firing in ${delay.inSeconds}s');
+    await requestPermissions();
+    final scheduleMode = await _resolveScheduleMode();
+    await _scheduleOccurrence(
+      id: testAlarmId,
+      fireDate: tz.TZDateTime.now(tz.local).add(delay),
+      matchDateTimeComponents: null,
+      payload: testAlarmPayload,
+      scheduleMode: scheduleMode,
+    );
+  }
+
   /// Exact scheduling throws a platform exception if the exact-alarm
   /// permission isn't currently granted (checked live, independently of
   /// whatever [requestPermissions] returned — the user may have granted it
