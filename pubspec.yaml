@@ -57,9 +57,38 @@ dependencies:
   # pub.dev: 22.2.0, verified publisher dexterx.dev, actively maintained.
   flutter_local_notifications: ^22.2.0
 
+  # zonedSchedule requires tz.TZDateTime. Verified on pub.dev: 0.11.1,
+  # official Dart team, verified publisher labs.dart.dev.
+  timezone: ^0.11.1
+
+  # Reads the device's actual IANA timezone name so alarms fire at the
+  # correct local wall-clock time instead of UTC. Verified on pub.dev:
+  # 5.1.0, verified publisher wolverinebeach.net, actively maintained.
+  flutter_timezone: ^5.1.0
+
+  # Loops the alarm tone on the ring screen (the notification channel sound
+  # only plays once). Latest version compatible with this project's Flutter
+  # SDK (3.38.1) is 6.7.1 — 6.8.0+ requires Flutter >=3.44.0.
+  audioplayers: ^6.7.1
+
+  # Continuous vibration buzz on the ring screen (HapticFeedback only offers
+  # short one-shot clicks). Latest version compatible with this project's
+  # Dart SDK (3.10.0) is 3.1.8 — 3.2.0 requires Dart ^3.11.0.
+  vibration: ^3.1.8
+
+  # App-scoped max screen brightness on the ring screen, without needing the
+  # system WRITE_SETTINGS permission. Verified on pub.dev: 2.1.11.
+  screen_brightness: ^2.1.11
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
+  # Provides InMemorySharedPreferencesAsync, shared_preferences' own
+  # documented in-memory test double, so widget tests don't hit a real
+  # platform channel. Already resolved transitively via shared_preferences;
+  # listed directly since the test imports it. Version pinned to match.
+  shared_preferences_platform_interface: ^2.4.2
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -80,9 +109,8 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/sounds/alarm.wav
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
