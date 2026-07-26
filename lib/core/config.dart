@@ -50,9 +50,11 @@ class AppConfig {
 
   // --- Camera / pose pipeline ---
 
-  // Balances pose-detection speed against enough detail to track a whole
-  // body at ~2-2.5m (the single framing standard), on a mid-range device.
-  static const cameraResolutionPreset = ResolutionPreset.medium;
+  // ~240p on Android. Pose landmarks are robust at low resolution, and a
+  // smaller frame reduces both conversion and inference cost — this plugin
+  // exposes no other performance knob (no GPU-delegate toggle at the Dart
+  // level), so resolution is the highest-impact lever available here.
+  static const cameraResolutionPreset = ResolutionPreset.low;
 
   // Landmarks that must all be visible for "whole body in frame" to be true.
   static const List<PoseLandmarkType> requiredFramingLandmarks = [

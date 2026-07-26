@@ -9,6 +9,7 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import '../../core/config.dart';
 import 'camera_service.dart';
 import 'framing_check.dart';
+import 'pose_painter.dart';
 
 const _tag = '[PosePipeline]';
 
@@ -39,6 +40,19 @@ class PosePipelineController extends ChangeNotifier {
   int _frameCountThisSecond = 0;
   Timer? _fpsTimer;
 
+  // Stage 1 profiling (kDebugMode only, zero cost in release): per-stage
+  // millisecond timing, accumulated and averaged once per second, to find
+  // where per-frame cost actually goes rather than guessing.
+  final _arrivalStopwatch = Stopwatch();
+  double _arrivalTotalMs = 0;
+  int _arrivalCount = 0;
+  double _conversionTotalMs = 0;
+  int _conversionCount = 0;
+  double _inferenceTotalMs = 0;
+  int _inferenceCount = 0;
+  double _postProcessTotalMs = 0;
+  int _postProcessCount = 0;
+
   CameraController? get cameraController => _cameraService.controller;
 
   List<Pose> poses = [];
@@ -62,7 +76,11 @@ class PosePipelineController extends ChangeNotifier {
       _fpsTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
         fps = _frameCountThisSecond.toDouble();
         _frameCountThisSecond = 0;
-        debugPrint('$_tag detection fps=$fps');
+        if (kDebugMode) {
+          _logAndResetProfiling();
+        } else {
+          debugPrint('$_tag detection fps=$fps');
+        }
         notifyListeners();
       });
       debugPrint('$_tag initialize: camera + image stream started');
@@ -90,6 +108,19 @@ class PosePipelineController extends ChangeNotifier {
   Future<void> resumeCamera() => initialize();
 
   void _onImage(CameraImage image) {
+    // Camera frame arrival interval: measured for every frame the platform
+    // delivers, regardless of whether we go on to drop or process it, since
+    // this reflects the raw camera stream rate, not our processing rate.
+    if (kDebugMode) {
+      if (_arrivalStopwatch.isRunning) {
+        _arrivalTotalMs += _arrivalStopwatch.elapsedMicroseconds / 1000;
+        _arrivalCount++;
+      }
+      _arrivalStopwatch
+        ..reset()
+        ..start();
+    }
+
     final now = DateTime.now();
     if (_isDetecting) return; // drop: previous frame still processing
     if (now.difference(_lastProcessedAt).inMilliseconds <
@@ -104,18 +135,55 @@ class PosePipelineController extends ChangeNotifier {
   Future<void> _processImage(CameraImage image) async {
     final controller = _cameraService.controller;
     if (controller == null) return;
+
+    final conversionStopwatch = kDebugMode ? (Stopwatch()..start()) : null;
     final inputImage = _inputImageFromCameraImage(image, controller);
+    if (conversionStopwatch != null) {
+      _conversionTotalMs += conversionStopwatch.elapsedMicroseconds / 1000;
+      _conversionCount++;
+    }
     if (inputImage == null) return;
 
     try {
+      final inferenceStopwatch = kDebugMode ? (Stopwatch()..start()) : null;
       final detected = await _poseDetector.processImage(inputImage);
+      if (inferenceStopwatch != null) {
+        _inferenceTotalMs += inferenceStopwatch.elapsedMicroseconds / 1000;
+        _inferenceCount++;
+      }
+
+      final postStopwatch = kDebugMode ? (Stopwatch()..start()) : null;
       poses = detected;
       framing = checkFraming(detected);
       _frameCountThisSecond++;
       notifyListeners();
+      if (postStopwatch != null) {
+        _postProcessTotalMs += postStopwatch.elapsedMicroseconds / 1000;
+        _postProcessCount++;
+      }
     } catch (error) {
       debugPrint('$_tag processImage FAILED: $error');
     }
+  }
+
+  void _logAndResetProfiling() {
+    double average(double total, int count) => count == 0 ? 0 : total / count;
+    debugPrint(
+      '$_tag fps=$fps | arrival=${average(_arrivalTotalMs, _arrivalCount).toStringAsFixed(1)}ms '
+      'conversion=${average(_conversionTotalMs, _conversionCount).toStringAsFixed(1)}ms '
+      'inference=${average(_inferenceTotalMs, _inferenceCount).toStringAsFixed(1)}ms '
+      'postProcess=${average(_postProcessTotalMs, _postProcessCount).toStringAsFixed(1)}ms '
+      'paint=${PosePainter.averagePaintMs.toStringAsFixed(1)}ms',
+    );
+    _arrivalTotalMs = 0;
+    _arrivalCount = 0;
+    _conversionTotalMs = 0;
+    _conversionCount = 0;
+    _inferenceTotalMs = 0;
+    _inferenceCount = 0;
+    _postProcessTotalMs = 0;
+    _postProcessCount = 0;
+    PosePainter.resetPaintStats();
   }
 
   /// Converts a raw camera frame into the InputImage ML Kit expects,

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 
@@ -50,8 +51,31 @@ class PosePainter extends CustomPainter {
   final InputImageRotation rotation;
   final CameraLensDirection cameraLensDirection;
 
+  // Stage 1 profiling (kDebugMode only): total time spent inside paint(),
+  // read and reset once per second by PosePipelineController. Static
+  // because a new PosePainter is constructed on every rebuild.
+  static double _totalPaintMs = 0;
+  static int _paintCount = 0;
+
+  static double get averagePaintMs =>
+      _paintCount == 0 ? 0 : _totalPaintMs / _paintCount;
+
+  static void resetPaintStats() {
+    _totalPaintMs = 0;
+    _paintCount = 0;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
+    final stopwatch = kDebugMode ? (Stopwatch()..start()) : null;
+    _paint(canvas, size);
+    if (stopwatch != null) {
+      _totalPaintMs += stopwatch.elapsedMicroseconds / 1000;
+      _paintCount++;
+    }
+  }
+
+  void _paint(Canvas canvas, Size size) {
     if (imageSize.width == 0 || imageSize.height == 0) return;
 
     final linePaint = Paint()
@@ -124,5 +148,13 @@ class PosePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant PosePainter oldDelegate) => true;
+  bool shouldRepaint(covariant PosePainter oldDelegate) {
+    // The pipeline notifies listeners once per second even when only fps
+    // changed (no new pose data) — skip the actual canvas work in that
+    // case. `poses` is only reassigned when a new detection completes, so
+    // identity comparison cheaply detects "nothing new happened".
+    return !identical(oldDelegate.poses, poses) ||
+        oldDelegate.imageSize != imageSize ||
+        oldDelegate.rotation != rotation;
+  }
 }
