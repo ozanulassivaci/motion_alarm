@@ -140,6 +140,10 @@ class ExerciseCountingController extends ChangeNotifier {
     final session = _session;
     if (session == null) return;
 
+    // A completed set is done: stop feeding it frames entirely, rather than
+    // letting the session keep counting past the target.
+    if (completed) return;
+
     // Freeze: do not count through bad tracking. The dev screen surfaces
     // `framing` directly, so no separate "why" needs to be stored here.
     if (framing.status != FramingStatus.ready || poses.isEmpty) {
