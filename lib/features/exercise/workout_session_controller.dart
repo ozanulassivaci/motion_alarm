@@ -20,8 +20,15 @@ enum WorkoutFlowState {
   framingCheck,
   countdown,
   calibrating,
+  // Full-screen announcement (name + demo animation) shown before every
+  // exercise, including the first — reached right after calibration
+  // completes, and again after each exercise finishes. No pose frames are
+  // forwarded to ExerciseCountingController while this is showing (see
+  // _onPoseFrame), even though counting.phase is already "counting" by this
+  // point, so reps can never silently accumulate before the user has even
+  // seen which exercise is starting.
+  intro,
   exercising,
-  transitioning,
   completed,
 }
 
@@ -133,15 +140,15 @@ class WorkoutSessionController extends ChangeNotifier {
     await pipeline.initialize();
   }
 
-  void continueToNextExercise() {
-    if (isLastExercise) return;
-    currentExerciseIndex++;
-    counting.setTargetReps(workout.repsPerExercise);
-    counting.startExerciseWithExistingCalibration(currentExercise);
+  /// Advances out of the intro screen into actual rep counting — called by
+  /// both the intro's auto-advance timer and its manual continue button.
+  /// The exercise itself (index, calibration reuse, target reps) is already
+  /// fully set up by the time intro is entered (see _onExerciseCompleted /
+  /// the calibration-complete branch in _onCountingChanged), so this only
+  /// needs to flip the state.
+  void confirmIntroAndBeginExercise() {
+    if (state != WorkoutFlowState.intro) return;
     state = WorkoutFlowState.exercising;
-    _lastPersistedTotalReps = 0;
-    unawaited(_persistSession());
-    debugPrint('$_tag continueToNextExercise: ${currentExercise.label}');
     notifyListeners();
   }
 
@@ -181,7 +188,7 @@ class WorkoutSessionController extends ChangeNotifier {
       // counting's own notifyListeners() reaches us via _onCountingChanged.
       case WorkoutFlowState.checkingPermission:
       case WorkoutFlowState.permissionMissing:
-      case WorkoutFlowState.transitioning:
+      case WorkoutFlowState.intro:
       case WorkoutFlowState.completed:
         break;
     }
@@ -213,8 +220,8 @@ class WorkoutSessionController extends ChangeNotifier {
       state = WorkoutFlowState.calibrating;
       debugPrint('$_tag starting calibration for ${currentExercise.label}');
     } else {
+      state = WorkoutFlowState.intro;
       counting.startExerciseWithExistingCalibration(currentExercise);
-      state = WorkoutFlowState.exercising;
     }
     notifyListeners();
   }
@@ -222,8 +229,8 @@ class WorkoutSessionController extends ChangeNotifier {
   void _onCountingChanged() {
     if (state == WorkoutFlowState.calibrating &&
         counting.phase == CountingPhase.counting) {
-      state = WorkoutFlowState.exercising;
-      debugPrint('$_tag calibration complete, exercising: ${currentExercise.label}');
+      state = WorkoutFlowState.intro;
+      debugPrint('$_tag calibration complete, showing intro: ${currentExercise.label}');
     }
     if (state == WorkoutFlowState.exercising && counting.completed) {
       _onExerciseCompleted();
@@ -245,9 +252,21 @@ class WorkoutSessionController extends ChangeNotifier {
       '$_tag exercise complete: ${currentExercise.label} '
       '(${currentExerciseIndex + 1}/${workout.exercises.length})',
     );
-    state = isLastExercise
-        ? WorkoutFlowState.completed
-        : WorkoutFlowState.transitioning;
+    if (isLastExercise) {
+      state = WorkoutFlowState.completed;
+      return;
+    }
+    currentExerciseIndex++;
+    // Set before starting the next exercise's counting below: that call
+    // synchronously re-triggers _onCountingChanged (counting's own
+    // notifyListeners), and this must already read as "intro", not the
+    // just-finished exercise's stale "exercising", when that happens.
+    state = WorkoutFlowState.intro;
+    counting.setTargetReps(workout.repsPerExercise);
+    counting.startExerciseWithExistingCalibration(currentExercise);
+    _lastPersistedTotalReps = 0;
+    unawaited(_persistSession());
+    debugPrint('$_tag next exercise ready, showing intro: ${currentExercise.label}');
   }
 
   @override

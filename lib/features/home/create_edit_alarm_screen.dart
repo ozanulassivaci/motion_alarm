@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/alarm.dart';
 import '../../data/models/exercise_type.dart';
 import '../alarm/alarm_list_controller.dart';
+import '../exercise/exercise_demo.dart';
+import 'time_wheel_picker.dart';
 
 const _dayOrder = [
   DateTime.monday,
@@ -138,6 +140,11 @@ class _CreateEditAlarmScreenState
           ...ExerciseType.values.map(
             (type) => CheckboxListTile(
               contentPadding: EdgeInsets.zero,
+              secondary: ExerciseDemo(
+                type: type,
+                size: 48,
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+              ),
               title: Text(type.label),
               value: _exercisePool.contains(type),
               onChanged: (checked) {
@@ -159,7 +166,7 @@ class _CreateEditAlarmScreenState
   }
 
   Future<void> _pickTime() async {
-    final picked = await showTimePicker(context: context, initialTime: _time);
+    final picked = await showTimeWheelPicker(context, initialTime: _time);
     if (picked != null) {
       setState(() => _time = picked);
     }

@@ -18,6 +18,7 @@ import '../alarm/workout_planner.dart';
 import '../home/home_screen.dart';
 import '../settings/settings_controller.dart';
 import 'camera_permission_service.dart';
+import 'exercise_demo.dart';
 import 'framing_check.dart';
 import 'ghost_silhouette_painter.dart';
 import 'pose_painter.dart';
@@ -235,8 +236,8 @@ class _WorkoutBody extends StatelessWidget {
       case WorkoutFlowState.calibrating:
       case WorkoutFlowState.exercising:
         return _CameraFlowView(controller: controller, onExit: onExit);
-      case WorkoutFlowState.transitioning:
-        return _TransitionView(controller: controller, onExit: onExit);
+      case WorkoutFlowState.intro:
+        return _IntroView(controller: controller, onExit: onExit);
       case WorkoutFlowState.completed:
         return _CompletionView(onExit: onExit);
     }
@@ -456,14 +457,25 @@ class _ExercisingOverlay extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            controller.currentExercise.label,
-            style: const TextStyle(fontSize: 20),
+          // Persistent — unlike the intro, this must survive a mid-set
+          // glance from 2-2.5m away, per CLAUDE.md's legibility requirement.
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                controller.currentExercise.label,
+                style: const TextStyle(
+                  fontSize: AppConfig.persistentExerciseNameFontSize,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
           ),
           Text(
             '${counting.totalReps}',
             style: const TextStyle(
-              fontSize: 180,
+              fontSize: AppConfig.repCounterFontSize,
               fontWeight: FontWeight.bold,
               fontFeatures: [FontFeature.tabularFigures()],
               height: 1,
@@ -490,17 +502,25 @@ class _ExercisingOverlay extends StatelessWidget {
   }
 }
 
-class _TransitionView extends StatefulWidget {
-  const _TransitionView({required this.controller, required this.onExit});
+/// Full-screen announcement shown before every exercise — including the
+/// first, right after calibration — so the user knows what they're about to
+/// do without having to squint at a small label mid-set (that's what the
+/// persistent header in _ExercisingOverlay is for; this intro can be missed,
+/// that one can't, per CLAUDE.md). Auto-advances via
+/// WorkoutSessionController.confirmIntroAndBeginExercise, which only flips
+/// the state — the exercise itself is already set up (index, calibration
+/// reuse, target reps) by the time this shows.
+class _IntroView extends StatefulWidget {
+  const _IntroView({required this.controller, required this.onExit});
 
   final WorkoutSessionController controller;
   final Future<void> Function() onExit;
 
   @override
-  State<_TransitionView> createState() => _TransitionViewState();
+  State<_IntroView> createState() => _IntroViewState();
 }
 
-class _TransitionViewState extends State<_TransitionView> {
+class _IntroViewState extends State<_IntroView> {
   Timer? _timer;
 
   @override
@@ -508,7 +528,7 @@ class _TransitionViewState extends State<_TransitionView> {
     super.initState();
     _timer = Timer(
       Duration(seconds: AppConfig.exerciseTransitionSeconds),
-      widget.controller.continueToNextExercise,
+      widget.controller.confirmIntroAndBeginExercise,
     );
   }
 
@@ -520,33 +540,39 @@ class _TransitionViewState extends State<_TransitionView> {
 
   @override
   Widget build(BuildContext context) {
-    final nextExercise =
-        widget.controller.workout.exercises[widget.controller.currentExerciseIndex + 1];
+    final exercise = widget.controller.currentExercise;
     return Stack(
       fit: StackFit.expand,
       children: [
         Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Sırada', style: TextStyle(fontSize: 20)),
-              const SizedBox(height: 8),
-              Text(
-                nextExercise.label,
-                style: const TextStyle(
-                  fontSize: 48,
-                  fontWeight: FontWeight.bold,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    exercise.label,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: AppConfig.introExerciseNameFontSize,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 32),
-              FilledButton(
-                onPressed: () {
-                  _timer?.cancel();
-                  widget.controller.continueToNextExercise();
-                },
-                child: const Text('Devam Et'),
-              ),
-            ],
+                const SizedBox(height: 24),
+                ExerciseDemo(type: exercise, size: 200, color: Colors.black87),
+                const SizedBox(height: 32),
+                FilledButton(
+                  onPressed: () {
+                    _timer?.cancel();
+                    widget.controller.confirmIntroAndBeginExercise();
+                  },
+                  child: const Text('Başla'),
+                ),
+              ],
+            ),
           ),
         ),
         Positioned(

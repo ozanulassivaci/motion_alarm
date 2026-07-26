@@ -140,9 +140,45 @@ class AppConfig {
 
   // --- Workout flow timing ---
 
-  // How long the "next up: <exercise>" transition screen shows between
-  // exercises before auto-continuing (a tap continues immediately).
+  // How long the intro screen (exercise name + demo animation, shown before
+  // the first exercise and between every subsequent one) stays up before
+  // auto-continuing (a tap continues immediately).
   static const int exerciseTransitionSeconds = 3;
+
+  // --- Legibility (2-2.5m viewing distance, per CLAUDE.md's framing
+  // standard) ---
+  //
+  // A user just woken up, not wearing glasses, standing 2-2.5m from the
+  // phone must be able to read these at a glance. All three are also
+  // wrapped in FittedBox at their call sites so a long label never
+  // overflows — these are the *target* sizes it scales down from, not a
+  // hard guarantee for every possible string.
+
+  // The huge exercise-name announcement on the full-screen intro shown
+  // before each exercise.
+  static const double introExerciseNameFontSize = 64;
+
+  // The persistent exercise-name header shown throughout the exercise
+  // itself — must survive a mid-set glance, not just the intro.
+  static const double persistentExerciseNameFontSize = 40;
+
+  // The rep counter itself, already the CLAUDE.md-specified 2m-legible
+  // treatment since Phase 4 — extracted here so every legibility-relevant
+  // size lives in one place rather than being hardcoded in the widget.
+  static const double repCounterFontSize = 180;
+
+  // How long one loop of a procedural exercise demo animation takes
+  // (down-and-up, or left-right, depending on the exercise) — see
+  // exercise_demo.dart.
+  static const int exerciseDemoLoopMs = 1400;
+
+  // --- Time wheel picker ---
+  //
+  // Large enough to be a comfortable one-handed touch target in a dark
+  // room, per the create/edit alarm screen's night-theme requirements.
+
+  static const double timeWheelItemExtent = 64;
+  static const double timeWheelFontSize = 32;
 
   // How long the emergency-exit control must be held before it shows its
   // confirmation dialog — deliberately effortful so it's never the easy
