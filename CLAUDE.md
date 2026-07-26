@@ -10,6 +10,81 @@ When an alarm fires, the user must physically complete a short exercise set,
 verified in real time by the phone camera using **on-device** pose estimation,
 before the alarm will stop.
 
+## Current State (as of Phase 4)
+
+**Complete and verified on a physical device (Galaxy A25):**
+- Phase 0 — scaffolding, themes, folder structure.
+- Phase 1 — alarm core: scheduling, permissions, full-screen ring over the
+  lock screen, survives the app being killed.
+- Phase 2 — camera + on-device pose pipeline, skeleton overlay correctly
+  aligned (mirror + rotation handled).
+- Phase 3 — rep-counting engine, all four exercises, tunable from the dev
+  screen's debug overlay.
+
+**Implemented, not yet verified on device:**
+- Phase 4 — alarm + exercise integration (workout drawing, framing check,
+  countdown, calibration, exercise flow, transitions, completion,
+  emergency exit, permission-missing fallback). Builds and analyzes clean;
+  awaiting an on-device end-to-end pass.
+
+**Known gaps:**
+- Reboot persistence: `ScheduledNotificationBootReceiver` is declared and
+  should reschedule alarms after a reboot per flutter_local_notifications'
+  documented behavior, but this has never actually been tested by
+  rebooting the device.
+- Rep-counter/ROM-gate thresholds in `core/config.dart` are reasoned
+  starting guesses, not measured — tuning against real body data is an
+  explicitly separate, not-yet-started phase.
+- Beep toggle: `FeedbackService.beepEnabled` exists and defaults on, but
+  isn't yet exposed in the real Settings screen or persisted — only the
+  camera dev screen's local switch can change it, and only for that
+  session.
+- Practice mode and the debug/eval-logging folder (`features/debug/`) are
+  still Phase 0 placeholders — not implemented.
+- iOS alarm layer remains best-effort/TODO, per Platforms below.
+
+**Key decisions made along the way, not otherwise written down:**
+- **The rep-counter design below is superseded by what's actually
+  implemented.** Measured ~8-10fps on-device (ML Kit inference is a ~65ms
+  hardware floor on this chip — neither a lower camera resolution nor
+  manual pre-inference downscaling reduced it) makes fixed-threshold
+  crossing detection unreliable for fast reps. The engine actually built
+  is extrema-reversal: track a running local peak/trough, confirm it once
+  the signal retraces from it by more than `minRepAmplitude` (a *relative*
+  reversal gate, not an absolute threshold), then separately gate the
+  confirmed cycle on an absolute range of motion (a fraction of the
+  calibration reference) and `minRepDurationMs` between the two confirmed
+  extrema. Deliberately no minimum-sample-count requirement, since that
+  would miss fast reps at this frame rate.
+- **Calibration is once per workout session, not once per exercise** — the
+  first exercise's calibration reference is reused for exercises 2/3 in
+  Medium/Hard workouts.
+- **The workout is drawn from the alarm's stored difficulty + exercise
+  pool at fire time**, not precomputed at schedule time, keeping alarm
+  scheduling fully decoupled from workout-planning logic (the notification
+  payload is still just the alarm id). If the pool is smaller than the
+  difficulty needs, all of the pool's exercises are used rather than
+  repeating one.
+- **flutter_local_notifications (v16+) no longer declares its own
+  receivers.** `ScheduledNotificationReceiver` (delivery) and
+  `ScheduledNotificationBootReceiver` (reboot reschedule) must be declared
+  by hand in `AndroidManifest.xml`, or alarms schedule "successfully" but
+  never actually fire, with no exception anywhere.
+- **camera_android_camerax converts every captured frame from
+  YUV_420_888 to NV21 natively**, allocating a fresh buffer each time,
+  regardless of whether that frame is later processed or dropped in Dart.
+  The fix was capping the camera's own capture rate
+  (`CameraController(fps: ...)`), not just dropping frames after arrival.
+- The framing-check's ghost silhouette is a procedural `CustomPainter`,
+  not an image asset or package.
+- Emergency exit, workout completion, and the permission-missing fallback
+  all exit through one shared path: stop any lingering feedback, call
+  `disableIfOneTime`, navigate to the home screen clearing the stack.
+- The dev-only test-alarm button (long-press) encodes its chosen
+  difficulty/pool into the notification payload itself, since that config
+  has to survive the app being killed during the 10-second wait — the
+  same reason a real alarm's payload is just an id looked up later.
+
 ## Golden rules (apply to every task)
 
 1. Do exactly what the current task asks. Do **not** build ahead into later phases.
