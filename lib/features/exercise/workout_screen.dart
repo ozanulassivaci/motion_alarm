@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 
+import '../../app/app.dart';
 import '../../app/theme/morning_theme.dart';
 import '../../core/config.dart';
 import '../../core/haptics/haptics_service.dart';
@@ -171,6 +172,7 @@ class _WorkoutScreenState extends ConsumerState<WorkoutScreen>
   Future<void> _exitToHome() async {
     await _ringBridge.stopRinging();
     await WorkoutSessionRepository().clear();
+    isAlarmFlowActive = false;
     final alarmId = widget.alarmId;
     if (alarmId != null) {
       await ref

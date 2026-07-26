@@ -16,8 +16,12 @@ import androidx.core.content.ContextCompat
 class AlarmRingReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val alarmId = intent.getStringExtra(AlarmRingService.EXTRA_ALARM_ID)
+        val notificationId = intent.getIntExtra(AlarmRingService.EXTRA_NOTIFICATION_ID, -1)
         val serviceIntent = Intent(context, AlarmRingService::class.java).apply {
             if (alarmId != null) putExtra(AlarmRingService.EXTRA_ALARM_ID, alarmId)
+            if (notificationId != -1) {
+                putExtra(AlarmRingService.EXTRA_NOTIFICATION_ID, notificationId)
+            }
         }
         ContextCompat.startForegroundService(context, serviceIntent)
     }

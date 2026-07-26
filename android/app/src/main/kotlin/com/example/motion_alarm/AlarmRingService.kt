@@ -12,6 +12,7 @@ import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.IBinder
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -22,26 +23,41 @@ import androidx.core.app.NotificationCompat
  * Activity, so backgrounding, swiping it away from Recents, or the back
  * gesture can never silence it — see CLAUDE.md's "Alarm ownership"
  * architecture. The Flutter UI never touches a MediaPlayer/Vibrator again;
- * it only sends `lowerVolume`/`stopRinging` commands through MainActivity's
- * MethodChannel. This service is started by [AlarmRingReceiver], which is
- * fired by a native AlarmManager entry scheduled in parallel with
- * flutter_local_notifications' own — see NativeAlarmRingBridge for why a
- * second, parallel entry is necessary rather than hooking the existing one.
+ * it only sends `setExerciseActive`/`stopRinging` commands through
+ * MainActivity's MethodChannel. This service is started by
+ * [AlarmRingReceiver], which is fired by a native AlarmManager entry
+ * scheduled in parallel with flutter_local_notifications' own — see
+ * NativeAlarmRingBridge for why a second, parallel entry is necessary
+ * rather than hooking the existing one.
  */
 class AlarmRingService : Service() {
 
     companion object {
         const val EXTRA_ALARM_ID = "alarmId"
-        private const val NOTIFICATION_ID = 100001
+        const val EXTRA_NOTIFICATION_ID = "notificationId"
+        private const val ACTION_REPOST = "com.example.motion_alarm.action.REPOST_NOTIFICATION"
+        private const val DEFAULT_NOTIFICATION_ID = 100001
         private const val CHANNEL_ID = "alarm_channel"
 
         @Volatile
         private var instance: AlarmRingService? = null
 
+        @Volatile
+        private var lastKnownNotificationId: Int = DEFAULT_NOTIFICATION_ID
+
         fun isRinging(): Boolean = instance != null
 
-        fun lowerVolume(fraction: Float) {
-            instance?.setVolumeFraction(fraction)
+        fun currentAlarmId(): String? = instance?.alarmId
+
+        /// [active] true when the exercise/camera flow is on screen: lowers
+        /// the alarm volume (still ringing — see CLAUDE.md's volume rule)
+        /// and stops the alarm's own vibration loop so the single vibration
+        /// motor is free for per-rep haptic feedback. false restores full
+        /// volume and resumes the alarm vibration loop — used both for the
+        /// normal ring state and to recover if the exercise flow was
+        /// abandoned/interrupted before completion.
+        fun setExerciseActive(active: Boolean, loweredVolumeFraction: Float) {
+            instance?.applyExerciseActive(active, loweredVolumeFraction)
         }
 
         fun stopRinging(context: Context) {
@@ -53,13 +69,16 @@ class AlarmRingService : Service() {
                 // is somehow left over (e.g. a previous process died
                 // without reaching onDestroy).
                 val manager = context.getSystemService(NotificationManager::class.java)
-                manager?.cancel(NOTIFICATION_ID)
+                manager?.cancel(lastKnownNotificationId)
             }
         }
     }
 
     private var mediaPlayer: MediaPlayer? = null
     private var vibrator: Vibrator? = null
+    private var exerciseActive = false
+    private var alarmId: String? = null
+    private var notificationId: Int = DEFAULT_NOTIFICATION_ID
 
     override fun onCreate() {
         super.onCreate()
@@ -67,7 +86,22 @@ class AlarmRingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val alarmId = intent?.getStringExtra(EXTRA_ALARM_ID)
+        if (intent?.action == ACTION_REPOST) {
+            // Android 14+ lets the user swipe away a foreground-service
+            // notification even with setOngoing(true) — that can no longer
+            // be fully prevented (see CLAUDE.md). This is the repost-on-
+            // dismiss fallback triggered by the notification's deleteIntent:
+            // rebuild the same ongoing notification immediately. The actual
+            // ring (sound/vibration) is untouched by this — dismissing the
+            // notification never silences the alarm.
+            startForegroundWithNotification(alarmId)
+            return START_STICKY
+        }
+
+        alarmId = intent?.getStringExtra(EXTRA_ALARM_ID)
+        notificationId = intent?.getIntExtra(EXTRA_NOTIFICATION_ID, DEFAULT_NOTIFICATION_ID)
+            ?: DEFAULT_NOTIFICATION_ID
+        lastKnownNotificationId = notificationId
         startForegroundWithNotification(alarmId)
         startRinging()
         // START_STICKY: if the system kills this process under memory
@@ -112,8 +146,10 @@ class AlarmRingService : Service() {
         // Tap-to-return only. The full-screen launch-over-lock-screen job
         // stays exclusively flutter_local_notifications' (its own,
         // unchanged, already-verified notification posted at the same
-        // instant) — this notification only needs to survive as the
-        // ongoing, non-dismissible, sound-owning one from this point
+        // notification id — see NativeAlarmRingBridge on the Dart side for
+        // why the id must match: this post supersedes that one so only a
+        // single notification is ever visible) — this notification only
+        // needs to survive as the ongoing, sound-owning one from this point
         // forward, and offer a way back in if tapped.
         val contentIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -123,6 +159,20 @@ class AlarmRingService : Service() {
             this,
             0,
             contentIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        // See onStartCommand's ACTION_REPOST branch: this is the best
+        // legitimate mitigation available on Android 14+, where a user CAN
+        // swipe this notification away despite setOngoing(true). It is not
+        // truly non-dismissible — it reposts within a fraction of a second
+        // instead. The ring itself never depends on this notification
+        // existing, so a dismiss (even during that brief gap) never
+        // silences anything.
+        val deletePendingIntent = PendingIntent.getService(
+            this,
+            0,
+            Intent(this, AlarmRingService::class.java).setAction(ACTION_REPOST),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
@@ -138,16 +188,16 @@ class AlarmRingService : Service() {
             // No dismiss/snooze action anywhere on this notification — the
             // emergency exit inside the app is the only intentional way out.
             .setContentIntent(contentPendingIntent)
-            // Superseding flutter_local_notifications' notification (same
-            // id, posted moments earlier) must not re-trigger its channel
-            // sound/vibration on top of what this service already started.
+            .setDeleteIntent(deletePendingIntent)
+            // Reposting (see above) must not re-trigger a sound/vibration
+            // blast on top of what's already running.
             .setOnlyAlertOnce(true)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            startForeground(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         } else {
-            startForeground(NOTIFICATION_ID, notification)
+            startForeground(notificationId, notification)
         }
     }
 
@@ -175,30 +225,52 @@ class AlarmRingService : Service() {
                 start()
             }
         }
+        exerciseActive = false
         startVibration()
     }
 
     private fun startVibration() {
-        vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        if (vibrator == null) {
+            vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
         }
         // Vibrate immediately, then repeat the 800ms-on/400ms-off segment
         // (index 1 onward) until cancelled — same pattern the old Dart
         // AlarmRingScreen used.
-        vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 800, 400), 1))
+        val effect = VibrationEffect.createWaveform(longArrayOf(0, 800, 400), 1)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Explicitly tagged as USAGE_ALARM so OEM vibration-category
+            // settings (e.g. separate ringtone/notification/touch toggles)
+            // can't silently suppress it the way an untagged vibration call
+            // could be — the same discipline as the audio attributes above.
+            vibrator?.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ALARM))
+        } else {
+            vibrator?.vibrate(effect)
+        }
     }
 
-    private fun setVolumeFraction(fraction: Float) {
-        val clamped = fraction.coerceIn(0f, 1f)
-        mediaPlayer?.setVolume(clamped, clamped)
-        // The alarm's own vibration loop stops here so the single vibration
-        // motor is free for clear, distinct per-rep haptic feedback during
-        // the exercise — the alarm sound is the only channel that keeps
-        // nagging through the whole workout (per CLAUDE.md's volume rule).
-        vibrator?.cancel()
+    private fun applyExerciseActive(active: Boolean, loweredVolumeFraction: Float) {
+        exerciseActive = active
+        if (active) {
+            val clamped = loweredVolumeFraction.coerceIn(0f, 1f)
+            mediaPlayer?.setVolume(clamped, clamped)
+            // Stops here so the single vibration motor is free for clear,
+            // distinct per-rep haptic feedback during the exercise — the
+            // alarm sound is the only channel that keeps nagging through
+            // the whole workout (per CLAUDE.md's volume rule).
+            vibrator?.cancel()
+        } else {
+            mediaPlayer?.setVolume(1f, 1f)
+            // Restores the alarm vibration loop — covers both the normal
+            // ring state and recovering if the exercise flow was
+            // abandoned/interrupted before completion (AlarmRingScreen
+            // asserts "ring state" every time it's shown).
+            startVibration()
+        }
     }
 
     private fun stopSelfAndCleanUp() {

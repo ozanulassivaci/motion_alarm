@@ -4,6 +4,7 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../../core/config.dart';
 import '../../data/models/alarm.dart';
 import '../../data/models/exercise_type.dart';
 import 'native_alarm_ring_bridge.dart';
@@ -308,10 +309,15 @@ class AlarmSchedulingService {
     // Parallel native entry that starts AlarmRingService directly, so the
     // alarm rings independently of the Flutter engine ever starting — see
     // NativeAlarmRingBridge for why flutter_local_notifications' own
-    // zonedSchedule above can't be extended to do this itself.
+    // zonedSchedule above can't be extended to do this itself. Offset
+    // slightly so AlarmRingService's notification post deterministically
+    // supersedes flutter_local_notifications' rather than racing it — see
+    // AppConfig.ringServiceStartDelayMs.
     await _ringBridge.scheduleRing(
       id: id,
-      triggerAt: fireDate,
+      triggerAt: fireDate.add(
+        const Duration(milliseconds: AppConfig.ringServiceStartDelayMs),
+      ),
       alarmId: payload,
       exact: scheduleMode == AndroidScheduleMode.exactAllowWhileIdle,
     );

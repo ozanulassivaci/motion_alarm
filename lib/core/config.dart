@@ -166,6 +166,15 @@ class AppConfig {
   // mid-exercise (system Settings) rather than only checking once at start.
   static const int cameraPermissionPollIntervalMs = 2000;
 
+  // The native AlarmManager entry that starts AlarmRingService is scheduled
+  // this many ms after flutter_local_notifications' own entry for the same
+  // alarm, rather than at the identical instant. Both post to the same
+  // notification id (AlarmRingService's should win, since it owns the ring),
+  // but two independently-scheduled exact alarms firing at the same instant
+  // have no guaranteed ordering — this small, imperceptible offset makes
+  // AlarmRingService's post deterministically last instead of racing.
+  static const int ringServiceStartDelayMs = 300;
+
   // --- Camera / pose pipeline ---
 
   // ~240p on Android. Pose landmarks are robust at low resolution. Measured

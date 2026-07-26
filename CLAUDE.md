@@ -27,11 +27,13 @@ before the alarm will stop.
   emergency exit, permission-missing fallback). Builds and analyzes clean;
   awaiting an on-device end-to-end pass.
 - Phase 5 — alarm robustness: a native foreground service now owns alarm
-  ringing independently of any Activity, back/recents/notification-shade
-  escapes are closed, the alarm keeps ringing (lowered) through the whole
-  workout, and in-progress workout state survives the process dying. See
-  "Alarm ownership architecture" below. Builds and analyzes clean; awaiting
-  an on-device pass against the break-out test steps in that section.
+  ringing independently of any Activity. **The core mechanism is verified
+  on-device**: sound survives home/recents/kill, which was the main goal.
+  A first on-device pass also found five defects (duplicate notification,
+  reopening the app not returning to the alarm, wrong time displayed, the
+  notification being dismissible, vibration not working) — all fixed; see
+  "Alarm ownership architecture" below for what's implemented and awaiting
+  re-verification against the break-out test steps in that section.
 
 **Known gaps:**
 - Reboot persistence: `ScheduledNotificationBootReceiver` is declared and
@@ -263,9 +265,11 @@ wired in `MainActivity.kt`).
   **once started, sound/vibration cannot be silenced** by backgrounding,
   swiping the app away, or the back gesture. Getting the *screen* back in
   front of the user is best-effort: full-screen intent when locked;
-  otherwise the persistent, ongoing, non-dismissible notification
-  (`AlarmRingService`'s own, superseding `flutter_local_notifications`'
-  moments after it posts) is tappable to return.
+  otherwise the persistent, ongoing notification (`AlarmRingService`'s own,
+  superseding `flutter_local_notifications`' moments after it posts) is
+  tappable to return. That notification is dismissible on Android 14+ (see
+  the repost-on-dismiss fix below) — not truly non-dismissible — but
+  dismissing it never silences the ring either way.
 - **Audio attribution was a live bug, not a feature, before this phase.**
   The old Dart `AudioPlayer` never called `setAudioContext`, so it played on
   Android's default `AudioContextAndroid` — `USAGE_MEDIA`, `AUDIOFOCUS_GAIN`
@@ -325,6 +329,65 @@ wired in `MainActivity.kt`).
   intercept hardware volume keys reads as hostile and risks Play policy) —
   it degrades the wake-up nag, but the exercise gate itself stays enforced
   regardless of audio volume.
+
+**Five defects found on the first on-device pass, and how they were fixed:**
+- **Duplicate notification.** Both `flutter_local_notifications` and
+  `AlarmRingService` were meant to post to the same notification id (so the
+  service's post supersedes the other), but the id was never actually
+  threaded through natively — `AlarmRingService` used its own hardcoded
+  constant. Fixed by passing the same `id` all the way through
+  (`NativeAlarmRingBridge.scheduleRing` → `MainActivity` → `AlarmRingReceiver`
+  → `AlarmRingService`, as `EXTRA_NOTIFICATION_ID`). Since two independently
+  scheduled exact alarms firing at the identical instant have no guaranteed
+  ordering, the native entry is additionally scheduled
+  `AppConfig.ringServiceStartDelayMs` (300ms) after
+  `flutter_local_notifications`' one, so `AlarmRingService`'s post
+  deterministically wins instead of racing it.
+- **Reopening the app didn't return to the alarm.** Only notification-tap
+  paths were handled; launching from the plain launcher icon (cold start) or
+  resuming an already-running process that was showing something else (warm)
+  both fell through to the normal home screen. Fixed with
+  `AlarmRingService.isRinging()`/`currentAlarmId()`, checked from `main.dart`
+  at cold start (after the existing notification-tap checks come up empty)
+  and from a lifecycle observer in `MotionAlarmApp` on every
+  `AppLifecycleState.resumed` (guarded by the `isAlarmFlowActive` flag, set
+  in `AlarmRingScreen.initState` and cleared only by `WorkoutScreen`'s shared
+  `_exitToHome`, so an already-showing alarm flow is never pushed twice).
+  Note the scope of this fix: it always routes back to `AlarmRingScreen`
+  first (matching the existing notification-tap behavior), never directly
+  to a resumed `WorkoutScreen` — if the user had already tapped "Egzersize
+  Başla", they see one extra tap to re-enter the (already-progress-persisted)
+  workout, and the alarm briefly returns to full volume/vibration until they
+  do (see the vibration fix below). Tightening this further wasn't in scope.
+- **Wrong time displayed.** `AlarmRingScreen` showed the live ticking clock;
+  it now looks up the matching `Alarm` and shows its scheduled hour/minute
+  instead (falling back to the current time only for the dev test-alarm's
+  synthetic payload, which has no fixed schedule).
+- **Notification was dismissible.** Researched current behavior: Android 14+
+  lets users dismiss a foreground service's notification regardless of
+  `setOngoing(true)` — that guarantee is gone as of API 34. **The actual
+  guarantee here is repost-on-dismiss, not non-dismissibility**: the
+  notification carries a `deleteIntent` that immediately rebuilds it if
+  swiped away, so it reappears within a fraction of a second rather than
+  staying gone. Dismissing it never touches the running ring either way —
+  sound/vibration are only ever stopped by `stopRinging()`
+  (completion/emergency exit) or process death, never by notification
+  lifecycle.
+- **Vibration wasn't working.** The service took over sound but the
+  vibration loop had no explicit `VibrationAttributes` tag, unlike the sound
+  (which is correctly tagged `USAGE_ALARM`) — an untagged vibration call can
+  be silently suppressed by OEM per-category vibration settings (Samsung's
+  separate ringtone/notification/touch toggles, for instance). Fixed by
+  tagging it `VibrationAttributes.USAGE_ALARM` (API 33+) for the same reason
+  the audio is tagged `USAGE_ALARM`. Also implemented the required state
+  machine explicitly rather than the old one-way stop:
+  `AlarmRingService.setExerciseActive(active, fraction)` — `active: true`
+  (exercise/camera on screen) lowers volume and stops vibration so the
+  single vibration motor is free for per-rep haptic feedback; `active: false`
+  restores full volume and resumes the alarm vibration loop.
+  `AlarmRingScreen` calls this with `false` every time it's shown, which
+  doubles as the "resume alarm vibration if the workout was
+  abandoned/interrupted" behavior without needing a separate code path.
 
 ## Privacy statement (for store listing & README)
 

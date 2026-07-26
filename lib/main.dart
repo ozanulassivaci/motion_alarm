@@ -44,12 +44,19 @@ Future<void> main() async {
 
   final launchDetails = await notificationsPlugin
       .getNotificationAppLaunchDetails();
-  final launchedFromAlarmId =
-      (launchDetails?.didNotificationLaunchApp ?? false)
-          ? launchDetails?.notificationResponse?.payload
-          // Cold-start counterpart: covers being launched by tapping
-          // AlarmRingService's own notification instead.
-          : await ringBridge.consumeLaunchAlarmId();
+  var launchedFromAlarmId = (launchDetails?.didNotificationLaunchApp ?? false)
+      ? launchDetails?.notificationResponse?.payload
+      // Cold-start counterpart: covers being launched by tapping
+      // AlarmRingService's own notification instead.
+      : await ringBridge.consumeLaunchAlarmId();
+  if (launchedFromAlarmId == null) {
+    // Neither notification path launched this process — covers being
+    // launched from the plain launcher icon while AlarmRingService is
+    // still ringing in the background. Launching the app must never appear
+    // to be a way past a still-ringing alarm.
+    final status = await ringBridge.isRinging();
+    if (status.ringing) launchedFromAlarmId = status.alarmId;
+  }
   debugPrint(
     '$_tag didNotificationLaunchApp=${launchDetails?.didNotificationLaunchApp ?? false} '
     'launchedFromAlarmId=$launchedFromAlarmId',

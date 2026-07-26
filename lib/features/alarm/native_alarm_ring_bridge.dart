@@ -72,16 +72,23 @@ class NativeAlarmRingBridge {
     }
   }
 
-  /// Called when "Egzersize Başla" is tapped: lowers the ringing alarm's
-  /// volume instead of stopping it, per CLAUDE.md's volume rule — the alarm
-  /// keeps nagging (quietly) through the whole workout so dismissing it
-  /// isn't a free snooze. Also stops the alarm's own vibration loop, so the
-  /// single vibration motor is free for per-rep haptic feedback.
-  Future<void> lowerVolume({double fraction = 0.15}) async {
+  /// `active: true` when the exercise/camera flow is on screen: lowers the
+  /// ringing alarm's volume instead of stopping it, per CLAUDE.md's volume
+  /// rule (the alarm keeps nagging, quietly, through the whole workout so
+  /// dismissing it isn't a free snooze) and stops the alarm's own vibration
+  /// loop, freeing the single vibration motor for per-rep haptic feedback.
+  /// `active: false` restores full volume and resumes the alarm vibration
+  /// loop — AlarmRingScreen calls this every time it's shown, which both
+  /// covers the normal ring state and recovers correctly if the exercise
+  /// flow was abandoned/interrupted before completion.
+  Future<void> setExerciseActive(bool active, {double fraction = 0.15}) async {
     try {
-      await _channel.invokeMethod('lowerVolume', {'fraction': fraction});
+      await _channel.invokeMethod('setExerciseActive', {
+        'active': active,
+        'fraction': fraction,
+      });
     } catch (error) {
-      debugPrint('$_tag lowerVolume FAILED: $error');
+      debugPrint('$_tag setExerciseActive($active) FAILED: $error');
     }
   }
 
@@ -92,6 +99,23 @@ class NativeAlarmRingBridge {
       await _channel.invokeMethod('stopRinging');
     } catch (error) {
       debugPrint('$_tag stopRinging FAILED: $error');
+    }
+  }
+
+  /// Whether AlarmRingService is currently running, and for which alarmId —
+  /// used at app startup (cold launcher-icon start) and on every app resume
+  /// (warm background) to make sure the alarm/workout flow is shown instead
+  /// of the plain home screen whenever the alarm is still ringing.
+  Future<({bool ringing, String? alarmId})> isRinging() async {
+    try {
+      final result = await _channel.invokeMapMethod<String, Object?>('isRinging');
+      return (
+        ringing: result?['ringing'] as bool? ?? false,
+        alarmId: result?['alarmId'] as String?,
+      );
+    } catch (error) {
+      debugPrint('$_tag isRinging FAILED: $error');
+      return (ringing: false, alarmId: null);
     }
   }
 }

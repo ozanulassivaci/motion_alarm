@@ -48,9 +48,10 @@ class MainActivity : FlutterActivity() {
                     cancelRing(id)
                     result.success(null)
                 }
-                "lowerVolume" -> {
+                "setExerciseActive" -> {
+                    val active = call.argument<Boolean>("active") ?: false
                     val fraction = (call.argument<Number>("fraction") ?: 0.15).toFloat()
-                    AlarmRingService.lowerVolume(fraction)
+                    AlarmRingService.setExerciseActive(active, fraction)
                     result.success(null)
                 }
                 "stopRinging" -> {
@@ -60,6 +61,14 @@ class MainActivity : FlutterActivity() {
                 "consumeLaunchAlarmId" -> {
                     result.success(pendingLaunchAlarmId)
                     pendingLaunchAlarmId = null
+                }
+                "isRinging" -> {
+                    result.success(
+                        mapOf(
+                            "ringing" to AlarmRingService.isRinging(),
+                            "alarmId" to AlarmRingService.currentAlarmId(),
+                        ),
+                    )
                 }
                 else -> result.notImplemented()
             }
@@ -79,6 +88,11 @@ class MainActivity : FlutterActivity() {
     private fun ringPendingIntent(id: Int, alarmId: String?): PendingIntent {
         val ringIntent = Intent(this, AlarmRingReceiver::class.java).apply {
             if (alarmId != null) putExtra(AlarmRingService.EXTRA_ALARM_ID, alarmId)
+            // Reused as this notification's id so AlarmRingService's own
+            // post supersedes flutter_local_notifications' one instead of
+            // showing as a second, duplicate notification (both share the
+            // "alarm_channel" channel id already).
+            putExtra(AlarmRingService.EXTRA_NOTIFICATION_ID, id)
         }
         return PendingIntent.getBroadcast(
             this,
