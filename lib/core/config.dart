@@ -4,8 +4,9 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 /// All detection- and timing-related magic numbers live here so they can be
 /// tuned in one place without touching pipeline or widget code.
 ///
-/// Values below are Phase 0 placeholders. They will be replaced with
-/// measured defaults once the rep-counter engine is implemented.
+/// The rep-counter/ROM-gate values are reasoned starting defaults, not
+/// measured ones — tune them against your own body using the dev screen's
+/// debug overlay.
 class AppConfig {
   // --- Normalization ---
 
@@ -13,25 +14,107 @@ class AppConfig {
   // which pose measurements are considered too small/unreliable to trust.
   static const double minNormalizedTorsoLength = 0.05;
 
-  // --- Hysteresis (RepCounter state machine) ---
+  // --- Rep-counter engine (extrema-reversal design) ---
+  //
+  // RepCounter tracks a running local extreme (max while SEEKING_PEAK, min
+  // while SEEKING_TROUGH) and confirms that extreme once the signal has
+  // retraced from it by more than minRepAmplitude — a *relative* reversal
+  // gate, not a fixed absolute threshold. This is what stays robust at
+  // ~8-10fps: it never needs to sample the signal at a specific value, only
+  // notice a clear reversal in trend, which survives large jumps between
+  // sparse frames. See core/rep_counter.dart.
 
-  // A metric must fall below this normalized value to enter the DOWN state.
-  static const double hysteresisEnterDownThreshold = 0.35;
+  // Minimum normalized amplitude a metric must swing through, from its
+  // running extreme, before that extreme is confirmed as a real peak/trough
+  // rather than jitter. Also the minimum swing for the OLD fixed-threshold
+  // design this replaced; kept as one shared "how much wobble is noise"
+  // constant.
+  static const double minRepAmplitude = 0.15;
 
-  // A metric must rise above this normalized value to return to the UP state.
-  // Must stay lower than hysteresisEnterDownThreshold to create a dead zone
-  // that prevents jitter from double-counting a rep.
-  static const double hysteresisExitUpThreshold = 0.55;
-
-  // --- Rep validity rules ---
-
-  // Shortest allowed time (ms) between a DOWN and UP transition. Rejects
-  // reps completed faster than is physically plausible (sensor noise).
+  // Shortest allowed time (ms) between a confirmed peak and the confirmed
+  // trough that completes it. Rejects reps completed faster than is
+  // physically plausible (sensor noise), checked in wall-clock time between
+  // the two confirmed extrema — not frame count, so it stays meaningful
+  // regardless of fps.
   static const int minRepDurationMs = 300;
 
-  // Minimum normalized amplitude a metric must swing through between DOWN
-  // and UP to count as a real rep rather than small jitter.
-  static const double minRepAmplitude = 0.15;
+  // --- Range-of-motion gates ---
+  //
+  // Extrema-reversal alone is self-calibrating: a user doing shallow
+  // quarter-squats or a small bounce would still confirm peaks/troughs and
+  // get reps counted. Each gate below rejects a confirmed peak-to-trough
+  // cycle whose absolute span is too small, even though the reversal itself
+  // was real. Each is expressed as a *fraction of a calibration reference*
+  // (leg length or torso length — see calibration.dart), so the fraction is
+  // the fixed tunable constant while the actual distance required scales to
+  // the user's own body. These are starting guesses reasoned from typical
+  // body proportions — tune them against your own body using the dev
+  // screen's debug overlay, which shows "ROM gate" as the rejection reason
+  // when a real movement was too shallow to count.
+
+  // Squat: hip drop must be at least this fraction of leg length. ~15% of
+  // an ~85cm leg is ~13cm — clearly more than standing sway, well short of
+  // a "deep" squat, so shallow-but-real squats still count.
+  static const double squatRomGate = 0.15;
+
+  // Jumping jack, ankle-spread sub-metric: ankle distance must swing by at
+  // least this fraction of shoulder width. Resting stance is roughly
+  // hip-width apart (~0.3-0.6x shoulder width); a real jack spread roughly
+  // doubles that, so 0.5 requires a clear spread, not a small shuffle.
+  static const double jumpingJackAnkleRomGate = 0.5;
+
+  // Jumping jack, wrist-height sub-metric: wrist height must swing by at
+  // least this fraction of torso length. Raising arms to shoulder height as
+  // part of a jack already covers a large fraction of torso length, so 0.4
+  // requires a genuine raise without demanding a full overhead extension.
+  static const double jumpingJackWristRomGate = 0.4;
+
+  // High knees: knee height must rise by at least this fraction of leg
+  // length above its calibrated resting position. ~25% of an ~85cm leg is
+  // ~21cm — a deliberate lift, clearly more than normal walking-in-place
+  // jitter, well short of a knee-to-hip "extreme" lift.
+  static const double highKneeRomGate = 0.25;
+
+  // Overhead reach: wrist height must rise by at least this fraction of
+  // torso length above the nose line. Going from arms-at-sides to fully
+  // overhead spans well over a full torso length, so 0.3 is a conservative
+  // minimum that still requires real overhead extension, not a
+  // shoulder-height raise.
+  static const double overheadReachRomGate = 0.3;
+
+  // --- Jumping jack: independent sub-metric alignment ---
+
+  // Jumping jack has two independently-tracked sub-metrics (ankle spread,
+  // wrist height); a combined rep counts only when both confirm their
+  // "closed" trough within this many ms of each other — not the same video
+  // frame, since sparse sampling makes exact-frame coincidence unlikely
+  // even for a well-synchronized jack.
+  static const int jumpingJackAlignmentWindowMs = 300;
+
+  // --- Feedback ---
+
+  // Whether the optional rep-counted beep defaults to on. On for Phase 3
+  // dev testing, so reps are audible without watching the screen; the
+  // settings toggle can turn it off later.
+  static const bool beepEnabledByDefault = true;
+
+  // Haptic pulse duration (ms) for a normal counted rep.
+  static const int repHapticDurationMs = 40;
+
+  // Haptic pulse duration (ms) for each of the last few reps before the
+  // target, to signal the finish line.
+  static const int finalStretchHapticDurationMs = 120;
+
+  // How many reps before the target switch to the heavier "finish line"
+  // haptic.
+  static const int finalStretchRepCount = 3;
+
+  // Long success vibration duration (ms) on completing the full set.
+  static const int completionHapticDurationMs = 800;
+
+  // Default target rep count for the dev screen's test sessions, matching
+  // CLAUDE.md's Easy-difficulty default (1 exercise x 8 reps).
+  static const int defaultTargetReps = 8;
 
   // Minimum ML Kit landmark visibility/confidence score required before a
   // landmark is trusted — both for rep-metric computation and for the
