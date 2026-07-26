@@ -5,6 +5,7 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../data/models/alarm.dart';
+import '../../data/models/exercise_type.dart';
 
 const _alarmChannelId = 'alarm_channel';
 const _alarmChannelName = 'Alarms';
@@ -153,21 +154,72 @@ class AlarmSchedulingService {
   /// outside the range `_idFor` can ever produce, so it can never collide
   /// with a real alarm's scheduled occurrences.
   static const testAlarmId = 999999999;
-  static const testAlarmPayload = '__test_alarm__';
+  static const _testAlarmPayloadPrefix = '__test_alarm__';
 
+  /// [difficulty]/[exercisePool] let the dev-only test-alarm config sheet
+  /// (home_screen.dart) choose what WorkoutScreen draws its workout from,
+  /// so Medium/Hard's multi-exercise path is reachable without waiting for
+  /// a real alarm. Omitted (a bare short-press fire), the payload carries
+  /// no config and WorkoutScreen falls back to Easy + all four exercises,
+  /// exactly as before.
   Future<void> scheduleTestAlarm({
     Duration delay = const Duration(seconds: 10),
+    AlarmDifficulty? difficulty,
+    Set<ExerciseType>? exercisePool,
   }) async {
-    debugPrint('$_tag scheduleTestAlarm: firing in ${delay.inSeconds}s');
+    final payload = _buildTestAlarmPayload(difficulty, exercisePool);
+    debugPrint(
+      '$_tag scheduleTestAlarm: firing in ${delay.inSeconds}s '
+      'difficulty=${difficulty?.name} '
+      'exercisePool=${exercisePool?.map((type) => type.name).join(",")}',
+    );
     await requestPermissions();
     final scheduleMode = await _resolveScheduleMode();
     await _scheduleOccurrence(
       id: testAlarmId,
       fireDate: tz.TZDateTime.now(tz.local).add(delay),
       matchDateTimeComponents: null,
-      payload: testAlarmPayload,
+      payload: payload,
       scheduleMode: scheduleMode,
     );
+  }
+
+  static String _buildTestAlarmPayload(
+    AlarmDifficulty? difficulty,
+    Set<ExerciseType>? exercisePool,
+  ) {
+    if (difficulty == null || exercisePool == null || exercisePool.isEmpty) {
+      return _testAlarmPayloadPrefix;
+    }
+    final poolNames = exercisePool.map((type) => type.name).join(',');
+    return '$_testAlarmPayloadPrefix|${difficulty.name}|$poolNames';
+  }
+
+  /// Parses a payload produced by [scheduleTestAlarm]. Returns null if
+  /// [payload] isn't a test-alarm payload at all, or is a bare one with no
+  /// dev-picked config — callers should fall back to their own default in
+  /// that case, exactly like a real alarm id that matches nothing.
+  static ({AlarmDifficulty difficulty, Set<ExerciseType> exercisePool})?
+  parseTestAlarmConfig(String? payload) {
+    if (payload == null || !payload.startsWith(_testAlarmPayloadPrefix)) {
+      return null;
+    }
+    final parts = payload.split('|');
+    if (parts.length != 3) return null;
+    try {
+      final difficulty = AlarmDifficulty.values.byName(parts[1]);
+      final exercisePool = parts[2]
+          .split(',')
+          .map((name) => ExerciseType.values.byName(name))
+          .toSet();
+      if (exercisePool.isEmpty) return null;
+      return (difficulty: difficulty, exercisePool: exercisePool);
+    } catch (error) {
+      debugPrint(
+        '$_tag parseTestAlarmConfig: FAILED to parse "$payload": $error',
+      );
+      return null;
+    }
   }
 
   /// Exact scheduling throws a platform exception if the exact-alarm

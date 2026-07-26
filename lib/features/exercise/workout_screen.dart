@@ -11,6 +11,7 @@ import '../../core/haptics/haptics_service.dart';
 import '../../data/models/alarm.dart';
 import '../../data/models/exercise_type.dart';
 import '../alarm/alarm_list_controller.dart';
+import '../alarm/alarm_service.dart';
 import '../alarm/workout_planner.dart';
 import '../home/home_screen.dart';
 import '../settings/settings_controller.dart';
@@ -52,25 +53,40 @@ class _WorkoutScreenState extends ConsumerState<WorkoutScreen>
   }
 
   Future<void> _initWorkout() async {
-    final alarms = await ref.read(alarmListControllerProvider.future);
-    Alarm? alarm;
-    for (final candidate in alarms) {
-      if (candidate.id == widget.alarmId) {
-        alarm = candidate;
-        break;
+    final AlarmDifficulty difficulty;
+    final Set<ExerciseType> pool;
+
+    // A dev-picked test-alarm config (see home_screen.dart's long-press
+    // sheet) takes priority and never corresponds to a real alarm, so it's
+    // checked before the alarm-list lookup below.
+    final testConfig = AlarmSchedulingService.parseTestAlarmConfig(widget.alarmId);
+    if (testConfig != null) {
+      difficulty = testConfig.difficulty;
+      pool = testConfig.exercisePool;
+      debugPrint(
+        '$_tag using dev-picked test config: ${difficulty.name}, '
+        'pool=${pool.map((type) => type.label).join(", ")}',
+      );
+    } else {
+      final alarms = await ref.read(alarmListControllerProvider.future);
+      Alarm? alarm;
+      for (final candidate in alarms) {
+        if (candidate.id == widget.alarmId) {
+          alarm = candidate;
+          break;
+        }
+      }
+      difficulty = alarm?.difficulty ?? AlarmDifficulty.easy;
+      pool = alarm?.exercisePool ?? ExerciseType.values.toSet();
+      if (alarm == null) {
+        debugPrint(
+          '$_tag no alarm found for id=${widget.alarmId}; falling back to '
+          'Easy + all four exercises',
+        );
       }
     }
+
     final settings = await ref.read(settingsControllerProvider.future);
-
-    final difficulty = alarm?.difficulty ?? AlarmDifficulty.easy;
-    final pool = alarm?.exercisePool ?? ExerciseType.values.toSet();
-    if (alarm == null) {
-      debugPrint(
-        '$_tag no alarm found for id=${widget.alarmId}; falling back to '
-        'Easy + all four exercises',
-      );
-    }
-
     final workout = drawWorkout(
       difficulty: difficulty,
       pool: pool,
