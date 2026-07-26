@@ -80,6 +80,11 @@ dependencies:
   # system WRITE_SETTINGS permission. Verified on pub.dev: 2.1.11.
   screen_brightness: ^2.1.11
 
+  # Camera permission status (including permanently-denied detection) and
+  # deep-linking to app settings. Verified on pub.dev: 12.0.3, verified
+  # publisher baseflow.com, actively maintained.
+  permission_handler: ^12.0.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

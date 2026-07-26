@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/alarm.dart';
 import '../alarm/alarm_list_controller.dart';
+import '../exercise/pose_detection_dev_screen.dart';
 import 'alarm_list_view.dart';
 import 'create_edit_alarm_screen.dart';
 
@@ -27,6 +28,18 @@ class HomeScreen extends ConsumerWidget {
               onPressed: () => _guard(
                 context,
                 () => ref.read(alarmSchedulingServiceProvider).scheduleTestAlarm(),
+              ),
+            ),
+          // Debug-only: opens the camera + pose pipeline directly, without
+          // setting an alarm, for fast iteration on Phase 2.
+          if (kDebugMode)
+            IconButton(
+              icon: const Icon(Icons.camera_alt_outlined),
+              tooltip: 'TEST: Kamera + poz algılama',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const PoseDetectionDevScreen(),
+                ),
               ),
             ),
         ],

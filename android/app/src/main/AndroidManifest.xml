@@ -16,6 +16,9 @@
     <!-- Lets flutter_local_notifications reschedule alarms after a reboot,
          since AlarmManager entries are otherwise cleared. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Camera + on-device pose detection for framing/exercise verification.
+         Requested at runtime by CameraPermissionService, not just declared. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
     <application
         android:label="motion_alarm"
         android:name="${applicationName}"

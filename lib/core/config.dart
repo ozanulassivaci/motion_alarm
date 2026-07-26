@@ -1,3 +1,6 @@
+import 'package:camera/camera.dart';
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+
 /// All detection- and timing-related magic numbers live here so they can be
 /// tuned in one place without touching pipeline or widget code.
 ///
@@ -31,7 +34,8 @@ class AppConfig {
   static const double minRepAmplitude = 0.15;
 
   // Minimum ML Kit landmark visibility/confidence score required before a
-  // landmark is trusted for metric computation.
+  // landmark is trusted — both for rep-metric computation and for the
+  // framing-check's "is this landmark actually visible" test.
   static const double minLandmarkVisibility = 0.6;
 
   // --- Framing / calibration timing ---
@@ -43,4 +47,29 @@ class AppConfig {
   // Duration (seconds) of the "stand still" capture used to record the
   // user's personal calibration reference (torso length, resting hip height).
   static const int calibrationSeconds = 3;
+
+  // --- Camera / pose pipeline ---
+
+  // Balances pose-detection speed against enough detail to track a whole
+  // body at ~2-2.5m (the single framing standard), on a mid-range device.
+  static const cameraResolutionPreset = ResolutionPreset.medium;
+
+  // Landmarks that must all be visible for "whole body in frame" to be true.
+  static const List<PoseLandmarkType> requiredFramingLandmarks = [
+    PoseLandmarkType.nose,
+    PoseLandmarkType.leftShoulder,
+    PoseLandmarkType.rightShoulder,
+    PoseLandmarkType.leftHip,
+    PoseLandmarkType.rightHip,
+    PoseLandmarkType.leftKnee,
+    PoseLandmarkType.rightKnee,
+    PoseLandmarkType.leftAnkle,
+    PoseLandmarkType.rightAnkle,
+  ];
+
+  // Minimum time between pose-detector invocations, so a fast device doesn't
+  // burn battery/heat running inference on every single camera frame when
+  // ~15fps is already plenty for framing feedback. Frames arriving sooner
+  // than this are dropped, not queued.
+  static const int poseDetectionMinIntervalMs = 66;
 }
