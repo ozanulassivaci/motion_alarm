@@ -23,6 +23,9 @@ class CameraService {
       frontCamera,
       AppConfig.cameraResolutionPreset,
       enableAudio: false,
+      // Caps native capture (and the plugin's own per-frame YUV->NV21
+      // conversion) at the source; see the constant's doc comment.
+      fps: AppConfig.cameraCaptureFps,
       // A single-plane format is required for the InputImage conversion
       // below to work: nv21 on Android, bgra8888 on iOS.
       imageFormatGroup: Platform.isAndroid

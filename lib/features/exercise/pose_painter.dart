@@ -9,6 +9,16 @@ import '../../core/config.dart';
 
 const _accentColor = Color(0xFF2FE6C4);
 
+// Created once and reused across every paint() call instead of allocating
+// two new Paint objects per frame — their style/color never change.
+final _linePaint = Paint()
+  ..style = PaintingStyle.stroke
+  ..strokeWidth = 4
+  ..color = _accentColor;
+final _dotPaint = Paint()
+  ..style = PaintingStyle.fill
+  ..color = _accentColor;
+
 const _connections = [
   [PoseLandmarkType.leftEar, PoseLandmarkType.leftEye],
   [PoseLandmarkType.leftEye, PoseLandmarkType.nose],
@@ -78,14 +88,6 @@ class PosePainter extends CustomPainter {
   void _paint(Canvas canvas, Size size) {
     if (imageSize.width == 0 || imageSize.height == 0) return;
 
-    final linePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4
-      ..color = _accentColor;
-    final dotPaint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = _accentColor;
-
     for (final pose in poses) {
       for (final connection in _connections) {
         final a = pose.landmarks[connection[0]];
@@ -98,7 +100,7 @@ class PosePainter extends CustomPainter {
         canvas.drawLine(
           Offset(_translateX(a.x, size), _translateY(a.y, size)),
           Offset(_translateX(b.x, size), _translateY(b.y, size)),
-          linePaint,
+          _linePaint,
         );
       }
       for (final landmark in pose.landmarks.values) {
@@ -106,7 +108,7 @@ class PosePainter extends CustomPainter {
         canvas.drawCircle(
           Offset(_translateX(landmark.x, size), _translateY(landmark.y, size)),
           4,
-          dotPaint,
+          _dotPaint,
         );
       }
     }

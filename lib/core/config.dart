@@ -50,11 +50,35 @@ class AppConfig {
 
   // --- Camera / pose pipeline ---
 
-  // ~240p on Android. Pose landmarks are robust at low resolution, and a
-  // smaller frame reduces both conversion and inference cost — this plugin
-  // exposes no other performance knob (no GPU-delegate toggle at the Dart
-  // level), so resolution is the highest-impact lever available here.
+  // ~240p on Android. Pose landmarks are robust at low resolution. Measured
+  // on a Galaxy A25: this did NOT reduce ML Kit inference time (ML Kit
+  // resizes to its own fixed input size internally regardless of what we
+  // feed it), but it does shrink the per-frame NV21 buffer the camera plugin
+  // allocates and marshals to Dart on every captured frame.
   static const cameraResolutionPreset = ResolutionPreset.low;
+
+  // Caps the camera's own capture rate at the source (passed straight to
+  // CameraX's ImageAnalysis use case), instead of only dropping already-
+  // captured frames in Dart. Measured root cause of GC pressure: the camera
+  // plugin converts every captured frame from YUV_420_888 to NV21 natively
+  // (allocating a fresh buffer) before it ever reaches Dart, regardless of
+  // whether we go on to process or drop it — capping capture fps to roughly
+  // what we can actually consume (given ~65ms inference) halves that native
+  // conversion+allocation work instead of just discarding its output.
+  static const int cameraCaptureFps = 15;
+
+  // Whether to downscale the camera frame ourselves before handing it to
+  // ML Kit. Lowering cameraResolutionPreset alone did not reduce measured
+  // inference time, suggesting ML Kit resizes internally to its own fixed
+  // input size regardless of input size — this flag tests that hypothesis
+  // directly. If it doesn't measurably lower `inference` in the profiling
+  // log, set this back to false: inference time is a hard floor on this
+  // hardware, not a preprocessing cost.
+  static const bool enableManualDownscale = true;
+
+  // Integer factor applied to both width and height (2 = quarter the pixel
+  // count). Must evenly divide the camera frame's dimensions.
+  static const int manualDownscaleFactor = 2;
 
   // Landmarks that must all be visible for "whole body in frame" to be true.
   static const List<PoseLandmarkType> requiredFramingLandmarks = [

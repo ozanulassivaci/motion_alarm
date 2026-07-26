@@ -36,14 +36,28 @@ class PosePipelineController extends ChangeNotifier {
   );
 
   bool _isDetecting = false;
-  DateTime _lastProcessedAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // Monotonic clock for rate-limiting, instead of DateTime.now() — avoids
+  // allocating a new DateTime on every single incoming camera frame.
+  final _clock = Stopwatch()..start();
+  int _lastProcessedAtMs = 0;
+
   int _frameCountThisSecond = 0;
   Timer? _fpsTimer;
 
+  // Reused across frames instead of writing a downscaled NV21 buffer into a
+  // fresh Uint8List every time — see AppConfig.enableManualDownscale.
+  Uint8List? _downscaleBuffer;
+
   // Stage 1 profiling (kDebugMode only, zero cost in release): per-stage
   // millisecond timing, accumulated and averaged once per second, to find
-  // where per-frame cost actually goes rather than guessing.
+  // where per-frame cost actually goes rather than guessing. Stopwatches are
+  // long-lived fields (reset + reused), not allocated per frame, so this
+  // instrumentation doesn't itself add to the GC pressure it's measuring.
   final _arrivalStopwatch = Stopwatch();
+  final _conversionStopwatch = Stopwatch();
+  final _inferenceStopwatch = Stopwatch();
+  final _postProcessStopwatch = Stopwatch();
   double _arrivalTotalMs = 0;
   int _arrivalCount = 0;
   double _conversionTotalMs = 0;
@@ -121,14 +135,13 @@ class PosePipelineController extends ChangeNotifier {
         ..start();
     }
 
-    final now = DateTime.now();
     if (_isDetecting) return; // drop: previous frame still processing
-    if (now.difference(_lastProcessedAt).inMilliseconds <
-        AppConfig.poseDetectionMinIntervalMs) {
+    final nowMs = _clock.elapsedMilliseconds;
+    if (nowMs - _lastProcessedAtMs < AppConfig.poseDetectionMinIntervalMs) {
       return; // drop: rate-capped
     }
     _isDetecting = true;
-    _lastProcessedAt = now;
+    _lastProcessedAtMs = nowMs;
     _processImage(image).whenComplete(() => _isDetecting = false);
   }
 
@@ -136,29 +149,41 @@ class PosePipelineController extends ChangeNotifier {
     final controller = _cameraService.controller;
     if (controller == null) return;
 
-    final conversionStopwatch = kDebugMode ? (Stopwatch()..start()) : null;
+    if (kDebugMode) {
+      _conversionStopwatch
+        ..reset()
+        ..start();
+    }
     final inputImage = _inputImageFromCameraImage(image, controller);
-    if (conversionStopwatch != null) {
-      _conversionTotalMs += conversionStopwatch.elapsedMicroseconds / 1000;
+    if (kDebugMode) {
+      _conversionTotalMs += _conversionStopwatch.elapsedMicroseconds / 1000;
       _conversionCount++;
     }
     if (inputImage == null) return;
 
     try {
-      final inferenceStopwatch = kDebugMode ? (Stopwatch()..start()) : null;
+      if (kDebugMode) {
+        _inferenceStopwatch
+          ..reset()
+          ..start();
+      }
       final detected = await _poseDetector.processImage(inputImage);
-      if (inferenceStopwatch != null) {
-        _inferenceTotalMs += inferenceStopwatch.elapsedMicroseconds / 1000;
+      if (kDebugMode) {
+        _inferenceTotalMs += _inferenceStopwatch.elapsedMicroseconds / 1000;
         _inferenceCount++;
+        _postProcessStopwatch
+          ..reset()
+          ..start();
       }
 
-      final postStopwatch = kDebugMode ? (Stopwatch()..start()) : null;
       poses = detected;
       framing = checkFraming(detected);
       _frameCountThisSecond++;
       notifyListeners();
-      if (postStopwatch != null) {
-        _postProcessTotalMs += postStopwatch.elapsedMicroseconds / 1000;
+
+      if (kDebugMode) {
+        _postProcessTotalMs +=
+            _postProcessStopwatch.elapsedMicroseconds / 1000;
         _postProcessCount++;
       }
     } catch (error) {
@@ -230,18 +255,93 @@ class PosePipelineController extends ChangeNotifier {
     }
     final plane = image.planes.first;
 
-    lastImageSize = Size(image.width.toDouble(), image.height.toDouble());
+    var bytes = plane.bytes;
+    var width = image.width;
+    var height = image.height;
+    var bytesPerRow = plane.bytesPerRow;
+
+    if (AppConfig.enableManualDownscale &&
+        format == InputImageFormat.nv21 &&
+        width % AppConfig.manualDownscaleFactor == 0 &&
+        height % AppConfig.manualDownscaleFactor == 0) {
+      bytes = _downscaleNv21(
+        bytes,
+        width,
+        height,
+        AppConfig.manualDownscaleFactor,
+      );
+      width ~/= AppConfig.manualDownscaleFactor;
+      height ~/= AppConfig.manualDownscaleFactor;
+      bytesPerRow = width; // tightly packed, no row padding
+    }
+
+    final newSize = Size(width.toDouble(), height.toDouble());
+    if (newSize != lastImageSize) {
+      lastImageSize = newSize;
+    }
     lastRotation = rotation;
 
     return InputImage.fromBytes(
-      bytes: plane.bytes,
+      bytes: bytes,
       metadata: InputImageMetadata(
         size: lastImageSize,
         rotation: rotation,
         format: format,
-        bytesPerRow: plane.bytesPerRow,
+        bytesPerRow: bytesPerRow,
       ),
     );
+  }
+
+  /// Nearest-neighbor NV21 downscale by an integer factor. Writes into a
+  /// buffer allocated once and reused every frame (its size never changes
+  /// once the camera resolution is fixed), per the "reuse buffers instead
+  /// of allocating each frame" goal.
+  Uint8List _downscaleNv21(
+    Uint8List src,
+    int srcWidth,
+    int srcHeight,
+    int factor,
+  ) {
+    final dstWidth = srcWidth ~/ factor;
+    final dstHeight = srcHeight ~/ factor;
+    final ySize = dstWidth * dstHeight;
+    final totalSize = ySize + ySize ~/ 2;
+
+    var dst = _downscaleBuffer;
+    if (dst == null || dst.length != totalSize) {
+      dst = Uint8List(totalSize);
+      _downscaleBuffer = dst;
+    }
+
+    // Y plane: sample every `factor`-th row/column.
+    for (var y = 0; y < dstHeight; y++) {
+      final srcRowStart = (y * factor) * srcWidth;
+      final dstRowStart = y * dstWidth;
+      for (var x = 0; x < dstWidth; x++) {
+        dst[dstRowStart + x] = src[srcRowStart + x * factor];
+      }
+    }
+
+    // Interleaved VU plane: natively subsampled 2x2 relative to luma, so its
+    // own grid is (srcWidth/2 x srcHeight/2) VU pairs; downscale that grid
+    // by the same factor to stay consistent with the Y plane above.
+    final srcChromaWidth = srcWidth ~/ 2;
+    final srcUvStart = srcWidth * srcHeight;
+    final dstChromaWidth = dstWidth ~/ 2;
+    final dstChromaHeight = dstHeight ~/ 2;
+    final dstUvStart = ySize;
+    for (var y = 0; y < dstChromaHeight; y++) {
+      final srcRowStart = srcUvStart + (y * factor) * srcChromaWidth * 2;
+      final dstRowStart = dstUvStart + y * dstChromaWidth * 2;
+      for (var x = 0; x < dstChromaWidth; x++) {
+        final srcIndex = srcRowStart + (x * factor) * 2;
+        final dstIndex = dstRowStart + x * 2;
+        dst[dstIndex] = src[srcIndex]; // V
+        dst[dstIndex + 1] = src[srcIndex + 1]; // U
+      }
+    }
+
+    return dst;
   }
 
   @override
