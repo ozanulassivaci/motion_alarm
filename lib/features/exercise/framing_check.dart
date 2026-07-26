@@ -33,6 +33,10 @@ class FramingCheckResult {
 
 /// Pure function: given the poses detected in one frame, reports whether the
 /// required landmarks (core/config.dart) are present and confidently visible.
+///
+/// Runs once per processed frame, so it's written to allocate nothing in the
+/// common case: a cheap boolean scan first, only building the missing-list
+/// when framing actually turns out to be incomplete.
 FramingCheckResult checkFraming(List<Pose> poses) {
   if (poses.isEmpty) {
     return const FramingCheckResult(
@@ -42,18 +46,25 @@ FramingCheckResult checkFraming(List<Pose> poses) {
   }
 
   final pose = poses.first;
+  var hasMissing = false;
+  for (final type in AppConfig.requiredFramingLandmarks) {
+    if ((pose.landmarks[type]?.likelihood ?? 0) < AppConfig.minLandmarkVisibility) {
+      hasMissing = true;
+      break;
+    }
+  }
+
+  if (!hasMissing) {
+    return const FramingCheckResult(status: FramingStatus.ready, missingLandmarks: []);
+  }
+
   final missing = <PoseLandmarkType>[
     for (final type in AppConfig.requiredFramingLandmarks)
       if ((pose.landmarks[type]?.likelihood ?? 0) < AppConfig.minLandmarkVisibility)
         type,
   ];
-
-  if (missing.isNotEmpty) {
-    return FramingCheckResult(
-      status: FramingStatus.incompleteFraming,
-      missingLandmarks: missing,
-    );
-  }
-
-  return const FramingCheckResult(status: FramingStatus.ready, missingLandmarks: []);
+  return FramingCheckResult(
+    status: FramingStatus.incompleteFraming,
+    missingLandmarks: missing,
+  );
 }

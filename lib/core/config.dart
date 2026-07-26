@@ -68,13 +68,12 @@ class AppConfig {
   static const int cameraCaptureFps = 15;
 
   // Whether to downscale the camera frame ourselves before handing it to
-  // ML Kit. Lowering cameraResolutionPreset alone did not reduce measured
-  // inference time, suggesting ML Kit resizes internally to its own fixed
-  // input size regardless of input size — this flag tests that hypothesis
-  // directly. If it doesn't measurably lower `inference` in the profiling
-  // log, set this back to false: inference time is a hard floor on this
-  // hardware, not a preprocessing cost.
-  static const bool enableManualDownscale = true;
+  // ML Kit. Measured on a Galaxy A25: this did NOT reduce inference time —
+  // ML Kit resizes internally to its own fixed input size regardless of
+  // what we feed it, so inference is a hardware floor (~65ms on this chip),
+  // not a preprocessing cost. Left in place (off by default) in case a
+  // future device's ML Kit build behaves differently.
+  static const bool enableManualDownscale = false;
 
   // Integer factor applied to both width and height (2 = quarter the pixel
   // count). Must evenly divide the camera frame's dimensions.

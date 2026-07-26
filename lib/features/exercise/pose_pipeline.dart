@@ -49,6 +49,11 @@ class PosePipelineController extends ChangeNotifier {
   // fresh Uint8List every time — see AppConfig.enableManualDownscale.
   Uint8List? _downscaleBuffer;
 
+  // Lets lastImageSize's Size allocation be skipped entirely once the
+  // camera's resolution is known (it never changes frame-to-frame).
+  int _lastWidth = -1;
+  int _lastHeight = -1;
+
   // Stage 1 profiling (kDebugMode only, zero cost in release): per-stage
   // millisecond timing, accumulated and averaged once per second, to find
   // where per-frame cost actually goes rather than guessing. Stopwatches are
@@ -275,9 +280,12 @@ class PosePipelineController extends ChangeNotifier {
       bytesPerRow = width; // tightly packed, no row padding
     }
 
-    final newSize = Size(width.toDouble(), height.toDouble());
-    if (newSize != lastImageSize) {
-      lastImageSize = newSize;
+    // Compare raw ints before constructing a Size, so the common case (same
+    // camera resolution every frame) allocates nothing at all.
+    if (width != _lastWidth || height != _lastHeight) {
+      _lastWidth = width;
+      _lastHeight = height;
+      lastImageSize = Size(width.toDouble(), height.toDouble());
     }
     lastRotation = rotation;
 
