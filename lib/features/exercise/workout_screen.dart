@@ -12,13 +12,16 @@ import '../../data/models/alarm.dart';
 import '../../data/models/exercise_type.dart';
 import '../alarm/alarm_list_controller.dart';
 import '../alarm/alarm_service.dart';
+import '../alarm/native_alarm_ring_bridge.dart';
 import '../alarm/workout_planner.dart';
 import '../home/home_screen.dart';
 import '../settings/settings_controller.dart';
+import 'camera_permission_service.dart';
 import 'framing_check.dart';
 import 'ghost_silhouette_painter.dart';
 import 'pose_painter.dart';
 import 'workout_session_controller.dart';
+import 'workout_session_repository.dart';
 
 const _tag = '[WorkoutScreen]';
 
@@ -40,6 +43,9 @@ class WorkoutScreen extends ConsumerStatefulWidget {
 class _WorkoutScreenState extends ConsumerState<WorkoutScreen>
     with WidgetsBindingObserver {
   WorkoutSessionController? _controller;
+  final _ringBridge = NativeAlarmRingBridge();
+  final _permissionService = CameraPermissionService();
+  Timer? _permissionPollTimer;
 
   @override
   void initState() {
@@ -50,6 +56,32 @@ class _WorkoutScreenState extends ConsumerState<WorkoutScreen>
     // at max brightness regardless of that ordering.
     ScreenBrightness().setApplicationScreenBrightness(1.0);
     _initWorkout();
+    _permissionPollTimer = Timer.periodic(
+      const Duration(milliseconds: AppConfig.cameraPermissionPollIntervalMs),
+      (_) => _pollCameraPermission(),
+    );
+  }
+
+  /// Camera permission is checked once at [WorkoutSessionController.start],
+  /// but the user can revoke it from system Settings at any moment during
+  /// the exercise. Sound stays untouched either way — it's owned entirely
+  /// by AlarmRingService now — this only needs to move the UI to the
+  /// existing permission-missing fallback instead of freezing silently or
+  /// crashing on a camera error.
+  Future<void> _pollCameraPermission() async {
+    final controller = _controller;
+    if (controller == null) return;
+    if (controller.state == WorkoutFlowState.checkingPermission ||
+        controller.state == WorkoutFlowState.permissionMissing ||
+        controller.state == WorkoutFlowState.completed) {
+      return;
+    }
+    final status = await _permissionService.check();
+    if (status != CameraPermissionState.granted) {
+      debugPrint('$_tag camera permission revoked mid-workout: $status');
+      controller.pipeline.pauseCamera();
+      setState(() => controller.state = WorkoutFlowState.permissionMissing);
+    }
   }
 
   Future<void> _initWorkout() async {
@@ -98,7 +130,10 @@ class _WorkoutScreenState extends ConsumerState<WorkoutScreen>
       'x${workout.repsPerExercise}',
     );
 
-    final controller = WorkoutSessionController(workout: workout);
+    final controller = WorkoutSessionController(
+      workout: workout,
+      alarmId: widget.alarmId ?? 'no_alarm_id',
+    );
     controller.addListener(_onControllerChanged);
     if (!mounted) {
       controller.dispose();
@@ -128,7 +163,14 @@ class _WorkoutScreenState extends ConsumerState<WorkoutScreen>
     }
   }
 
+  /// The one path completion, emergency exit, and the permission-missing
+  /// fallback all converge on. Stopping the ring here — rather than
+  /// anywhere ringing starts — is deliberate: AlarmRingService keeps
+  /// ringing (lowered, not silenced) through backgrounding, permission
+  /// loss, anything short of this.
   Future<void> _exitToHome() async {
+    await _ringBridge.stopRinging();
+    await WorkoutSessionRepository().clear();
     final alarmId = widget.alarmId;
     if (alarmId != null) {
       await ref
@@ -146,6 +188,7 @@ class _WorkoutScreenState extends ConsumerState<WorkoutScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _permissionPollTimer?.cancel();
     _controller?.removeListener(_onControllerChanged);
     _controller?.dispose();
     ScreenBrightness().resetApplicationScreenBrightness();
@@ -157,12 +200,15 @@ class _WorkoutScreenState extends ConsumerState<WorkoutScreen>
     final controller = _controller;
     return Theme(
       data: morningTheme,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: SafeArea(
-          child: controller == null
-              ? const Center(child: CircularProgressIndicator())
-              : _WorkoutBody(controller: controller, onExit: _exitToHome),
+      child: PopScope(
+        canPop: false,
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: SafeArea(
+            child: controller == null
+                ? const Center(child: CircularProgressIndicator())
+                : _WorkoutBody(controller: controller, onExit: _exitToHome),
+          ),
         ),
       ),
     );

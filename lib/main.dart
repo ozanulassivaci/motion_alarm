@@ -6,6 +6,7 @@ import 'app/app.dart';
 import 'features/alarm/alarm_list_controller.dart';
 import 'features/alarm/alarm_ring_screen.dart';
 import 'features/alarm/alarm_service.dart';
+import 'features/alarm/native_alarm_ring_bridge.dart';
 
 const _tag = '[main]';
 
@@ -28,11 +29,27 @@ Future<void> main() async {
     },
   );
 
+  final ringBridge = NativeAlarmRingBridge();
+  ringBridge.init(
+    // The warm-path counterpart of the notification response callback
+    // above, but for AlarmRingService's own notification (see
+    // NativeAlarmRingBridge) rather than flutter_local_notifications'.
+    onAlarmNotificationTapped: (alarmId) {
+      debugPrint('$_tag onAlarmNotificationTapped: alarmId=$alarmId');
+      rootNavigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => AlarmRingScreen(alarmId: alarmId)),
+      );
+    },
+  );
+
   final launchDetails = await notificationsPlugin
       .getNotificationAppLaunchDetails();
-  final launchedFromAlarmId = (launchDetails?.didNotificationLaunchApp ?? false)
-      ? launchDetails?.notificationResponse?.payload
-      : null;
+  final launchedFromAlarmId =
+      (launchDetails?.didNotificationLaunchApp ?? false)
+          ? launchDetails?.notificationResponse?.payload
+          // Cold-start counterpart: covers being launched by tapping
+          // AlarmRingService's own notification instead.
+          : await ringBridge.consumeLaunchAlarmId();
   debugPrint(
     '$_tag didNotificationLaunchApp=${launchDetails?.didNotificationLaunchApp ?? false} '
     'launchedFromAlarmId=$launchedFromAlarmId',

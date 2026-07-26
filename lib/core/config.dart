@@ -149,6 +149,23 @@ class AppConfig {
   // path, per CLAUDE.md.
   static const int emergencyExitHoldSeconds = 3;
 
+  // Fraction of full volume the alarm sound is lowered to (not stopped) when
+  // "Egzersize Başla" is tapped, per CLAUDE.md's volume rule — it keeps
+  // ringing, quietly, through the whole workout so dismissing it isn't a
+  // free snooze.
+  static const double alarmVolumeDuringExerciseFraction = 0.15;
+
+  // A persisted in-progress workout session older than this is treated as
+  // stale and discarded rather than resumed — a real morning workout
+  // completes within minutes, so anything older is leftover state from an
+  // abandoned session, not one worth resuming into.
+  static const int workoutSessionMaxAgeMinutes = 60;
+
+  // How often WorkoutScreen polls camera permission status while a
+  // camera-dependent state is active, to catch the permission being revoked
+  // mid-exercise (system Settings) rather than only checking once at start.
+  static const int cameraPermissionPollIntervalMs = 2000;
+
   // --- Camera / pose pipeline ---
 
   // ~240p on Android. Pose landmarks are robust at low resolution. Measured

@@ -6,6 +6,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../../data/models/alarm.dart';
 import '../../data/models/exercise_type.dart';
+import 'native_alarm_ring_bridge.dart';
 
 const _alarmChannelId = 'alarm_channel';
 const _alarmChannelName = 'Alarms';
@@ -19,9 +20,11 @@ const _tag = '[AlarmSchedulingService]';
 /// Wraps flutter_local_notifications for the one thing this app needs from
 /// it: scheduling exact, full-screen alarms and cancelling them again.
 class AlarmSchedulingService {
-  AlarmSchedulingService(this._plugin);
+  AlarmSchedulingService(this._plugin, [NativeAlarmRingBridge? ringBridge])
+    : _ringBridge = ringBridge ?? NativeAlarmRingBridge();
 
   final FlutterLocalNotificationsPlugin _plugin;
+  final NativeAlarmRingBridge _ringBridge;
 
   Future<void> init({
     DidReceiveNotificationResponseCallback? onDidReceiveNotificationResponse,
@@ -250,7 +253,9 @@ class AlarmSchedulingService {
 
   Future<void> cancelAlarm(String alarmId) async {
     for (var weekday = 0; weekday <= 7; weekday++) {
-      await _plugin.cancel(id: _idFor(alarmId, weekday));
+      final id = _idFor(alarmId, weekday);
+      await _plugin.cancel(id: id);
+      await _ringBridge.cancelRing(id);
     }
     debugPrint('$_tag cancelAlarm($alarmId): cancelled ids for weekdays 0-7');
   }
@@ -299,6 +304,17 @@ class AlarmSchedulingService {
       debugPrintStack(stackTrace: stackTrace);
       rethrow;
     }
+
+    // Parallel native entry that starts AlarmRingService directly, so the
+    // alarm rings independently of the Flutter engine ever starting — see
+    // NativeAlarmRingBridge for why flutter_local_notifications' own
+    // zonedSchedule above can't be extended to do this itself.
+    await _ringBridge.scheduleRing(
+      id: id,
+      triggerAt: fireDate,
+      alarmId: payload,
+      exact: scheduleMode == AndroidScheduleMode.exactAllowWhileIdle,
+    );
   }
 
   tz.TZDateTime _nextOneTimeOccurrence(Alarm alarm) {

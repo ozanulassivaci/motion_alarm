@@ -9,6 +9,8 @@ import 'camera_permission_service.dart';
 import 'exercise_counting_controller.dart';
 import 'framing_check.dart';
 import 'pose_pipeline.dart';
+import 'workout_session_repository.dart';
+import 'workout_session_state.dart';
 
 const _tag = '[WorkoutSession]';
 
@@ -33,25 +35,37 @@ enum WorkoutFlowState {
 class WorkoutSessionController extends ChangeNotifier {
   WorkoutSessionController({
     required this.workout,
+    required this.alarmId,
     PosePipelineController? pipeline,
     ExerciseCountingController? counting,
     CameraPermissionService? permissionService,
+    WorkoutSessionRepository? sessionRepository,
   }) : pipeline = pipeline ?? PosePipelineController(),
        counting = counting ?? ExerciseCountingController(),
-       _permissionService = permissionService ?? CameraPermissionService() {
+       _permissionService = permissionService ?? CameraPermissionService(),
+       _sessionRepository = sessionRepository ?? WorkoutSessionRepository() {
     this.pipeline.addListener(_onPoseFrame);
     this.counting.addListener(_onCountingChanged);
   }
 
   final Workout workout;
+
+  /// Persistence key for resuming this workout after the process is killed
+  /// mid-exercise — see WorkoutSessionRepository. Not necessarily a real
+  /// Alarm.id (the dev test-alarm sheet's synthetic payload, or "no alarm
+  /// found", both still get a stable-enough key for one run).
+  final String alarmId;
+
   final PosePipelineController pipeline;
   final ExerciseCountingController counting;
   final CameraPermissionService _permissionService;
+  final WorkoutSessionRepository _sessionRepository;
 
   WorkoutFlowState state = WorkoutFlowState.checkingPermission;
   int currentExerciseIndex = 0;
   int countdownValue = AppConfig.countdownSeconds;
   Timer? _countdownTimer;
+  int? _lastPersistedTotalReps;
 
   ExerciseType get currentExercise => workout.exercises[currentExerciseIndex];
   bool get isLastExercise =>
@@ -71,7 +85,34 @@ class WorkoutSessionController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    final resumable = await _sessionRepository.loadResumable(alarmId);
+    if (resumable != null) {
+      await _resumeFrom(resumable);
+      return;
+    }
     await _proceedAfterPermission();
+  }
+
+  /// Restores exactly where a persisted, non-stale session for this
+  /// [alarmId] left off — skipping framing-check/countdown/calibration
+  /// entirely, since the workout was already drawn and calibration already
+  /// captured. Only the current exercise's own rep count needs replaying,
+  /// which [ExerciseCountingController.startExerciseWithExistingCalibration]
+  /// handles via `resumeReps` without touching pose/RepCounter internals.
+  Future<void> _resumeFrom(WorkoutSessionState saved) async {
+    currentExerciseIndex = saved.currentExerciseIndex;
+    counting.selectExercise(currentExercise);
+    counting.calibrationReference = saved.calibrationReference;
+    counting.setTargetReps(workout.repsPerExercise);
+    counting.startExerciseWithExistingCalibration(
+      currentExercise,
+      resumeReps: saved.repsCompletedForCurrentExercise,
+    );
+    _lastPersistedTotalReps = saved.repsCompletedForCurrentExercise;
+    state = WorkoutFlowState.exercising;
+    notifyListeners();
+    await pipeline.initialize();
   }
 
   Future<void> requestPermissionAndContinue() async {
@@ -98,8 +139,25 @@ class WorkoutSessionController extends ChangeNotifier {
     counting.setTargetReps(workout.repsPerExercise);
     counting.startExerciseWithExistingCalibration(currentExercise);
     state = WorkoutFlowState.exercising;
+    _lastPersistedTotalReps = 0;
+    unawaited(_persistSession());
     debugPrint('$_tag continueToNextExercise: ${currentExercise.label}');
     notifyListeners();
+  }
+
+  Future<void> _persistSession() async {
+    final reference = counting.calibrationReference;
+    if (reference == null) return;
+    await _sessionRepository.save(
+      WorkoutSessionState(
+        alarmId: alarmId,
+        workout: workout,
+        currentExerciseIndex: currentExerciseIndex,
+        repsCompletedForCurrentExercise: counting.totalReps,
+        calibrationReference: reference,
+        savedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
   }
 
   void _onPoseFrame() {
@@ -169,6 +227,15 @@ class WorkoutSessionController extends ChangeNotifier {
     }
     if (state == WorkoutFlowState.exercising && counting.completed) {
       _onExerciseCompleted();
+    }
+    // Persist only when the rep count actually changes (or on the
+    // calibration-complete transition above, where it's still 0) rather
+    // than on every processed pose frame — a rep-counted event is the only
+    // moment worth a disk write.
+    if (state == WorkoutFlowState.exercising &&
+        counting.totalReps != _lastPersistedTotalReps) {
+      _lastPersistedTotalReps = counting.totalReps;
+      unawaited(_persistSession());
     }
     notifyListeners();
   }

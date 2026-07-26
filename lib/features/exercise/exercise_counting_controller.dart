@@ -33,9 +33,16 @@ class ExerciseCountingController extends ChangeNotifier {
   CalibrationReference? calibrationReference;
   ExerciseSession? _session;
 
+  // Reps already credited before this ExerciseSession instance existed —
+  // set when resuming a persisted mid-exercise session (see
+  // startExerciseWithExistingCalibration's resumeReps param), so a resume
+  // doesn't need to replay pose history or touch RepCounter/ExerciseSession
+  // internals at all.
+  int _resumeOffset = 0;
+
   double get calibrationProgress => _calibrationCapture?.progress ?? 0;
   List<RepChannelSnapshot> get channels => _session?.channels ?? const [];
-  int get totalReps => _session?.totalReps ?? 0;
+  int get totalReps => _resumeOffset + (_session?.totalReps ?? 0);
 
   bool get beepEnabled => _feedback.beepEnabled;
   set beepEnabled(bool value) {
@@ -55,6 +62,7 @@ class ExerciseCountingController extends ChangeNotifier {
     _calibrationCapture = null;
     calibrationReference = null;
     _session = null;
+    _resumeOffset = 0;
     completed = false;
     notifyListeners();
   }
@@ -64,6 +72,7 @@ class ExerciseCountingController extends ChangeNotifier {
     _calibrationCapture = CalibrationCapture();
     calibrationReference = null;
     _session = null;
+    _resumeOffset = 0;
     completed = false;
     phase = CountingPhase.calibrating;
     debugPrint('$_tag startCalibration: exercise=${selectedType!.label}');
@@ -75,6 +84,7 @@ class ExerciseCountingController extends ChangeNotifier {
     _calibrationCapture = null;
     calibrationReference = null;
     _session = null;
+    _resumeOffset = 0;
     completed = false;
     notifyListeners();
   }
@@ -84,14 +94,25 @@ class ExerciseCountingController extends ChangeNotifier {
   /// exercise within one workout, since CLAUDE.md's calibration happens
   /// once per session, not once per exercise. No-ops if nothing has been
   /// calibrated yet (call [startCalibration] first for exercise 1).
-  void startExerciseWithExistingCalibration(ExerciseType type) {
+  ///
+  /// [resumeReps] credits reps already counted before this call, when
+  /// resuming a persisted mid-exercise session after the process was
+  /// killed — see WorkoutSessionController.
+  void startExerciseWithExistingCalibration(
+    ExerciseType type, {
+    int resumeReps = 0,
+  }) {
     final reference = calibrationReference;
     if (reference == null) return;
     selectedType = type;
     completed = false;
+    _resumeOffset = resumeReps;
     _session = createExerciseSession(type, reference);
     phase = CountingPhase.counting;
-    debugPrint('$_tag startExerciseWithExistingCalibration: ${type.label}');
+    debugPrint(
+      '$_tag startExerciseWithExistingCalibration: ${type.label} '
+      'resumeReps=$resumeReps',
+    );
     notifyListeners();
   }
 
@@ -169,7 +190,7 @@ class ExerciseCountingController extends ChangeNotifier {
 
     final newReps = session.update(poses.first.landmarks, timestampMs);
     if (newReps > 0) {
-      final afterReps = session.totalReps;
+      final afterReps = totalReps;
       final isFinalStretch =
           afterReps < targetReps &&
           afterReps > targetReps - AppConfig.finalStretchRepCount;

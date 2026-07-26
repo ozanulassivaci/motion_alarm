@@ -26,6 +26,12 @@ before the alarm will stop.
   countdown, calibration, exercise flow, transitions, completion,
   emergency exit, permission-missing fallback). Builds and analyzes clean;
   awaiting an on-device end-to-end pass.
+- Phase 5 — alarm robustness: a native foreground service now owns alarm
+  ringing independently of any Activity, back/recents/notification-shade
+  escapes are closed, the alarm keeps ringing (lowered) through the whole
+  workout, and in-progress workout state survives the process dying. See
+  "Alarm ownership architecture" below. Builds and analyzes clean; awaiting
+  an on-device pass against the break-out test steps in that section.
 
 **Known gaps:**
 - Reboot persistence: `ScheduledNotificationBootReceiver` is declared and
@@ -197,8 +203,15 @@ above are defaults.
 - Last 3 reps -> a distinct/heavier haptic to signal the finish line.
 - Completion -> long success vibration, alarm fully stops, screen flashes the
   accent color once.
-- When the exercise starts, the alarm's own ringing sound/vibration MUST STOP so
-  it does not collide with rep feedback.
+- **Volume rule (changed in Phase 5): the alarm sound does NOT stop when the
+  exercise starts.** It keeps looping, at a reduced volume
+  (`AppConfig.alarmVolumeDuringExerciseFraction`), through the entire
+  workout — otherwise tapping "Egzersize Başla" would be a free snooze with
+  no enforcement behind it. Only completion or a confirmed emergency exit
+  actually stops it. The alarm's own *vibration* loop does stop at this
+  point (freeing the single vibration motor for per-rep haptic feedback),
+  but the sound is the one channel that keeps nagging throughout. See
+  "Alarm ownership architecture" below for how this is implemented.
 
 ## Theme
 
@@ -216,6 +229,102 @@ above are defaults.
 - An **emergency exit** exists but is deliberately effortful (long-press + confirm),
   so a stuck user is never trapped, but it is not the easy path.
 - **Practice mode** lets the user run any exercise during the day without an alarm.
+
+## Alarm ownership architecture (Phase 5)
+
+Phase 4 testing showed the alarm's core promise was broken: ringing lived
+inside `AlarmRingScreen`'s widget state, so killing or backgrounding the app
+silenced it. Fixed by making a native Android foreground service
+(`AlarmRingService`) the sole owner of ringing (sound + vibration),
+independent of any Activity. **The Flutter UI — `AlarmRingScreen`,
+`WorkoutScreen` — is only a view over the service's state now; it never owns
+a `MediaPlayer`/`Vibrator` again**, only sends `lowerVolume()`/
+`stopRinging()` commands through a `MethodChannel` (`motion_alarm/ring_service`,
+wired in `MainActivity.kt`).
+
+- **Why a second, parallel, natively-scheduled `AlarmManager` entry exists**
+  (`NativeAlarmRingBridge.scheduleRing`, fired by `AlarmRingReceiver`), rather
+  than hooking `flutter_local_notifications`' existing one:
+  `flutter_local_notifications` posts its `PendingIntent` as an **explicit**
+  broadcast to its own receiver class, which Android delivers only to that
+  one component — a second receiver cannot piggyback on the same broadcast.
+  `flutter_local_notifications`' own `zonedSchedule` call is completely
+  untouched by this; the new entry is purely additive, fired at the
+  identical instant.
+- **Full-screen intent's real limit** (verified against current Android
+  docs, not assumed): on a **locked** device, FSI still launches the
+  Activity directly over the lock screen, unchanged. On an **unlocked**
+  device already on the home screen or in another app, FSI does **not**
+  force-launch the Activity — it only surfaces as a heads-up notification.
+  This means the ring must be startable independent of the Flutter
+  engine/Activity ever running at all, not just survivable after it has —
+  which is exactly why the native parallel-entry mechanism above is
+  necessary, not optional. The guarantee this architecture gives is that
+  **once started, sound/vibration cannot be silenced** by backgrounding,
+  swiping the app away, or the back gesture. Getting the *screen* back in
+  front of the user is best-effort: full-screen intent when locked;
+  otherwise the persistent, ongoing, non-dismissible notification
+  (`AlarmRingService`'s own, superseding `flutter_local_notifications`'
+  moments after it posts) is tappable to return.
+- **Audio attribution was a live bug, not a feature, before this phase.**
+  The old Dart `AudioPlayer` never called `setAudioContext`, so it played on
+  Android's default `AudioContextAndroid` — `USAGE_MEDIA`, `AUDIOFOCUS_GAIN`
+  — meaning the ring was **not** exempt from Do Not Disturb and was
+  actively requesting audio focus another app could interrupt. Fixed: the
+  native `MediaPlayer` uses `AudioAttributes.USAGE_ALARM` and requests **no**
+  audio focus at all (matching how AOSP's own Clock app plays its alarm
+  tone, so nothing can duck or steal it). No `MediaSession` is registered
+  anywhere in the audio path, confirmed on both the old and new
+  implementation.
+- **Back is blocked** (`PopScope(canPop: false)`) on both `AlarmRingScreen`
+  and `WorkoutScreen`. `MainActivity` declares
+  `android:resizeableActivity="false"`, opting out of split-screen/
+  freeform/Samsung pop-up view entirely.
+- **Session persistence**: `WorkoutSessionRepository` (backed by
+  `shared_preferences`, same pattern as the alarm/settings stores) persists
+  the drawn `Workout`, current exercise index, reps completed for the
+  current exercise, and the calibration reference — on every rep and every
+  exercise transition, discarded if older than
+  `AppConfig.workoutSessionMaxAgeMinutes`. `WorkoutSessionController` checks
+  for a resumable session before starting fresh, and resumes straight into
+  `exercising` (skipping framing-check/countdown/calibration entirely) via
+  `ExerciseCountingController.startExerciseWithExistingCalibration`'s
+  additive `resumeReps` parameter, which credits already-counted reps
+  without replaying pose history or touching `RepCounter` internals.
+- **Camera permission revoked mid-exercise** no longer risks a crash or a
+  silent freeze: `WorkoutScreen` polls permission status every
+  `AppConfig.cameraPermissionPollIntervalMs` while a camera-dependent state
+  is active and falls back to the existing permission-missing view. This is
+  effectively free precisely because sound is service-owned now and needs
+  no special handling on this path at all.
+- **Mechanisms explicitly rejected**, with reasoning, so they aren't
+  reintroduced later:
+  - `SYSTEM_ALERT_WINDOW` ("display over other apps") — not requested.
+    Full-screen intent is the officially sanctioned mechanism for
+    alarm-category apps and needs no overlay permission; `SYSTEM_ALERT_WINDOW`
+    draws heavy Play Store scrutiny for no benefit FSI doesn't already cover.
+  - **Screen pinning / lock task mode** — not implemented. Without a
+    device-owner, the user can always escape it via the standard
+    swipe-up-and-hold gesture, so it adds a consent dialog and support
+    confusion without a real guarantee; the back-gesture intercept above
+    gets most of the same benefit for free.
+  - **A `camera`-type foreground service** (keeping the pose pipeline
+    running while backgrounded) — not implemented. Background camera access
+    is one of the most heavily scrutinized permissions on Play. The camera
+    stays tied to the visible Activity; if the user backgrounds mid-exercise,
+    rep progress simply pauses (state persists, see above) and resumes when
+    the screen comes back — "can't rep-count what it can't see" is
+    acceptable, policy-safe behavior, not a bug.
+- **Accepted holes** (a threat model ranked every escape vector on this
+  Galaxy A25/Android 16 build; these are the ones deliberately left open,
+  not overlooked): force-stopping the app from system Settings, powering
+  the device off, uninstalling the app, and — before the alarm fires only —
+  manually changing the system clock. All are OS-level user-sovereignty
+  guarantees no Android app can or should override. Muting the alarm via the
+  volume buttons is also always possible and not blocked (attempting to
+  intercept hardware volume keys reads as hostile and risks Play policy) —
+  it degrades the wake-up nag, but the exercise gate itself stays enforced
+  regardless of audio volume.
 
 ## Privacy statement (for store listing & README)
 
