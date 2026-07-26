@@ -7,13 +7,12 @@ import 'package:screen_brightness/screen_brightness.dart';
 import 'package:vibration/vibration.dart';
 
 import '../../app/theme/morning_theme.dart';
-import '../home/home_screen.dart';
-import 'alarm_list_controller.dart';
+import '../exercise/workout_screen.dart';
 
-/// Fires full-screen over the lock screen. For now, "Alarmı Kapat" is a
-/// trivial dismiss — the exercise flow will replace this button with the
-/// actual rep-counting screen in a later phase, at which point a separate,
-/// deliberately effortful emergency exit goes here too.
+/// Fires full-screen over the lock screen. "Egzersize Başla" stops the
+/// alarm sound/vibration (so it doesn't collide with rep feedback, per
+/// CLAUDE.md) and hands off to WorkoutScreen, which owns everything from
+/// the framing check through dismissal — including the emergency exit.
 class AlarmRingScreen extends ConsumerStatefulWidget {
   const AlarmRingScreen({super.key, this.alarmId});
 
@@ -51,28 +50,19 @@ class _AlarmRingScreenState extends ConsumerState<AlarmRingScreen> {
     }
   }
 
-  // TODO: Once the exercise flow exists, this trivial dismiss is replaced by
-  // completing the assigned exercise, and a deliberately effortful
-  // (long-press + confirm) emergency exit is added alongside it.
-  Future<void> _dismiss() async {
+  Future<void> _startExercise() async {
     if (_dismissing) return;
     _dismissing = true;
 
+    // Stops here so it doesn't collide with rep feedback, per CLAUDE.md.
+    // Brightness stays maxed — WorkoutScreen wants it too, and re-requests
+    // it on its own init regardless of this screen's dispose().
     await _audioPlayer.stop();
     await Vibration.cancel();
-    await ScreenBrightness().resetApplicationScreenBrightness();
-
-    final alarmId = widget.alarmId;
-    if (alarmId != null) {
-      await ref
-          .read(alarmListControllerProvider.notifier)
-          .disableIfOneTime(alarmId);
-    }
 
     if (mounted) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-        (route) => false,
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => WorkoutScreen(alarmId: widget.alarmId)),
       );
     }
   }
@@ -107,7 +97,7 @@ class _AlarmRingScreenState extends ConsumerState<AlarmRingScreen> {
                 ),
                 const SizedBox(height: 48),
                 FilledButton(
-                  onPressed: _dismiss,
+                  onPressed: _startExercise,
                   style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 48,
@@ -115,7 +105,7 @@ class _AlarmRingScreenState extends ConsumerState<AlarmRingScreen> {
                     ),
                     textStyle: const TextStyle(fontSize: 24),
                   ),
-                  child: const Text('Alarmı Kapat'),
+                  child: const Text('Egzersize Başla'),
                 ),
               ],
             ),

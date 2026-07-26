@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/alarm.dart';
+import '../../data/models/exercise_type.dart';
 import '../../data/repositories/alarm_repository.dart';
 import 'alarm_service.dart';
 
@@ -33,6 +34,7 @@ class AlarmListController extends AsyncNotifier<List<Alarm>> {
     required int minute,
     required Set<int> repeatDays,
     required AlarmDifficulty difficulty,
+    required Set<ExerciseType> exercisePool,
   }) async {
     final current = await future;
     final alarm = Alarm(
@@ -42,6 +44,7 @@ class AlarmListController extends AsyncNotifier<List<Alarm>> {
       enabled: true,
       repeatDays: repeatDays,
       difficulty: difficulty,
+      exercisePool: exercisePool,
     );
     await _persist([...current, alarm]);
     await _schedulingService.scheduleAlarm(alarm);

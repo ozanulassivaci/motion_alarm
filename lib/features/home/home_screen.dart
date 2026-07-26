@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/alarm.dart';
 import '../alarm/alarm_list_controller.dart';
 import '../exercise/pose_detection_dev_screen.dart';
+import '../settings/settings_screen.dart';
 import 'alarm_list_view.dart';
 import 'create_edit_alarm_screen.dart';
 
@@ -19,6 +20,13 @@ class HomeScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Motion Alarm'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Ayarlar',
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
+          ),
           // Debug-only: reproduces the firing/delivery path in 10s instead
           // of waiting on the clock, for diagnosing scheduling issues.
           if (kDebugMode)

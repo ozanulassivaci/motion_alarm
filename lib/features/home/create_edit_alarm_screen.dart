@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/alarm.dart';
+import '../../data/models/exercise_type.dart';
 import '../alarm/alarm_list_controller.dart';
 
 const _dayOrder = [
@@ -45,6 +46,7 @@ class _CreateEditAlarmScreenState
   late TimeOfDay _time;
   late Set<int> _repeatDays;
   late AlarmDifficulty _difficulty;
+  late Set<ExerciseType> _exercisePool;
 
   @override
   void initState() {
@@ -55,6 +57,9 @@ class _CreateEditAlarmScreenState
         : TimeOfDay(hour: existing.hour, minute: existing.minute);
     _repeatDays = {...(existing?.repeatDays ?? <int>{})};
     _difficulty = existing?.difficulty ?? AlarmDifficulty.easy;
+    // A new alarm defaults to every exercise accepted; the user unchecks
+    // the ones they don't want rather than starting from an empty pool.
+    _exercisePool = {...(existing?.exercisePool ?? ExerciseType.values.toSet())};
   }
 
   bool get _isEditing => widget.existingAlarm != null;
@@ -123,7 +128,30 @@ class _CreateEditAlarmScreenState
               setState(() => _difficulty = selection.first);
             },
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
+          const Text('Egzersizler'),
+          const Text(
+            'Alarm çaldığında bu egzersizlerden rastgele seçilir.',
+            style: TextStyle(fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          ...ExerciseType.values.map(
+            (type) => CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(type.label),
+              value: _exercisePool.contains(type),
+              onChanged: (checked) {
+                setState(() {
+                  if (checked ?? false) {
+                    _exercisePool.add(type);
+                  } else {
+                    _exercisePool.remove(type);
+                  }
+                });
+              },
+            ),
+          ),
+          const SizedBox(height: 24),
           FilledButton(onPressed: _save, child: const Text('Kaydet')),
         ],
       ),
@@ -138,6 +166,13 @@ class _CreateEditAlarmScreenState
   }
 
   Future<void> _save() async {
+    if (_exercisePool.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('En az bir egzersiz seçmelisin.')),
+      );
+      return;
+    }
+
     final controller = ref.read(alarmListControllerProvider.notifier);
     final existing = widget.existingAlarm;
     try {
@@ -147,6 +182,7 @@ class _CreateEditAlarmScreenState
           minute: _time.minute,
           repeatDays: _repeatDays,
           difficulty: _difficulty,
+          exercisePool: _exercisePool,
         );
       } else {
         await controller.updateAlarm(
@@ -155,6 +191,7 @@ class _CreateEditAlarmScreenState
             minute: _time.minute,
             repeatDays: _repeatDays,
             difficulty: _difficulty,
+            exercisePool: _exercisePool,
           ),
         );
       }

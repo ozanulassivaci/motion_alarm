@@ -131,6 +131,24 @@ class AppConfig {
   // user's personal calibration reference (torso length, resting hip height).
   static const int calibrationSeconds = 3;
 
+  // --- Workout defaults (per CLAUDE.md's difficulty section) ---
+  // User-adjustable in Settings; these are only the seed values.
+
+  static const int defaultEasyReps = 8;
+  static const int defaultMediumReps = 10;
+  static const int defaultHardReps = 12;
+
+  // --- Workout flow timing ---
+
+  // How long the "next up: <exercise>" transition screen shows between
+  // exercises before auto-continuing (a tap continues immediately).
+  static const int exerciseTransitionSeconds = 3;
+
+  // How long the emergency-exit control must be held before it shows its
+  // confirmation dialog — deliberately effortful so it's never the easy
+  // path, per CLAUDE.md.
+  static const int emergencyExitHoldSeconds = 3;
+
   // --- Camera / pose pipeline ---
 
   // ~240p on Android. Pose landmarks are robust at low resolution. Measured

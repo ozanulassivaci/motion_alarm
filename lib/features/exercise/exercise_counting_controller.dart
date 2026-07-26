@@ -79,6 +79,22 @@ class ExerciseCountingController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Starts counting a new exercise reusing an already-established
+  /// calibration, skipping the calibration step entirely — for the 2nd/3rd
+  /// exercise within one workout, since CLAUDE.md's calibration happens
+  /// once per session, not once per exercise. No-ops if nothing has been
+  /// calibrated yet (call [startCalibration] first for exercise 1).
+  void startExerciseWithExistingCalibration(ExerciseType type) {
+    final reference = calibrationReference;
+    if (reference == null) return;
+    selectedType = type;
+    completed = false;
+    _session = createExerciseSession(type, reference);
+    phase = CountingPhase.counting;
+    debugPrint('$_tag startExerciseWithExistingCalibration: ${type.label}');
+    notifyListeners();
+  }
+
   /// Called by the dev screen once per processed pose frame.
   void onPoseUpdate({
     required List<Pose> poses,
